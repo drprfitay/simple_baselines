@@ -1,0 +1,30 @@
+# Data
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+*.so
+
+executions/
+rosetta/
+data/
+results/
+notebooks/tmp_files/
+notebooks/results/
+notebooks/refined_figures/
+
+# Local development environment and build metadata
+.venv/
+.matplotlib/
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/
+
+# Notebook-generated figures
+figures/
+
+*.pkl
+*.svg
+*.pth
+*.pt
+*.csv

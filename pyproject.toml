@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protein-fitness-simple-baselines"
+version = "0.1.0"
+description = "Protein fitness embedding, baseline, scoring, and analysis workflows"
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+
+[tool.setuptools]
+package-dir = {"" = "code"}
+py-modules = [
+  "calculate_fitness_for_plm_multiple_decodings",
+  "calculate_fitness_for_plm_original_additivity",
+  "collect_gfp_embeddings",
+  "collect_model_selection_scoring_results",
+  "collect_protgym_embeddings",
+  "collect_scoring_features_for_representation_analyses",
+  "create_hamming_mds",
+  "dataset",
+  "detect_epistasis",
+  "embedder",
+  "embedding_engine",
+  "example_run_jobs",
+  "exetnsive_model_selection",
+  "generate_jobs_for_extensive_model_selection",
+  "generate_scoring_for_feature_comp",
+  "lora_controlled_extrap",
+  "merge_embedding_chunks",
+  "mine_foldseek_tokens",
+  "mixed_representation_analysis_gen_jobs",
+  "normalization_method_sensitivity",
+  "plm_base",
+  "representation_geometry",
+  "run_feature_comp_analysis",
+  "subset_embedding_chunks",
+  "train_classifiers_over_embeddings",
+  "train_classifiers_over_ohe",
+  "train_classifiers_over_subsamples",
+  "train_classifiers_over_subsamples_new",
+  "train_regressors_over_embeddings_subsamples",
+  "trainer",
+  "transfer_learning_across_layers",
+  "transfer_learning_ohe_grid",
+  "tsne_candidate_libraries",
+  "utils",
+  "utils_for_analysis",
+]
