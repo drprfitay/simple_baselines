@@ -416,6 +416,52 @@ python code/generate_jobs_for_extensive_model_selection.py \
 
 This writes preflight, architecture-resolution, and post-resolution scoring shell scripts plus `scoring_manifest.csv`. Inspect the generated commands before launching them.
 
+The generator does not execute the scripts. Because this example uses relative
+data paths, launch all three phases from the repository root and in dependency
+order:
+
+```bash
+cd /path/to/simple_baselines
+JOB_DIR=data/pard3/example_scoring_jobs
+
+bash "$JOB_DIR/preflight/00_make_splits.sh"
+
+for job in "$JOB_DIR"/resolve_architectures/*.sh; do
+  bash "$job"
+done
+
+for job in "$JOB_DIR"/score_after_resolving/*.sh; do
+  bash "$job"
+done
+```
+
+Do not `cd` into one of the generated subdirectories before running a script:
+relative inputs such as `data/pard3/pard3.csv` would then resolve underneath
+that subdirectory. Architecture and scoring scripts can be submitted to a
+scheduler instead of being run sequentially, but scoring must wait for its
+corresponding architecture-resolution jobs. If `--train_sizes` is omitted, the
+generator's notice that random jobs were skipped is informational rather than
+an error.
+
+Preflight creates split JSON files only. Every scoring command includes
+`--require_resolved_architecture`, so its matching architecture job must first
+produce `best_architecture.json`. A missing file under
+`scoring_cache/<label>/architectures/<feature>/<resolution>/` means the
+architecture phase was skipped or did not complete successfully; removing the
+requirement merely attempts the same resolution inside the scoring process.
+
+For the current CASP/SaProt files, note that `casp.csv` reaches mutation order
+18 but `embeddings/saprot` has chunks only for orders 0–10. Full-resolution
+splits currently include the complete CSV and consequently require SaProt
+chunks 11–18. Until those chunks are generated or full split creation is made
+to honor the maximum mutation bound, use the generated `less_than_K` and
+`equal_to_K` architecture/scoring pairs. For K=1, for example:
+
+```bash
+bash data/casp/scoring_jobs/saprot/resolve_architectures/0002_mean_saprot_less_than_K_K_1.sh
+bash data/casp/scoring_jobs/saprot/score_after_resolving/0006_mean_saprot_mutation_less_than_K_train_K_1.sh
+```
+
 ### `collect_model_selection_scoring_results.py`
 
 Collect the standard five groups of PARD3 scorer output:

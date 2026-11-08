@@ -500,7 +500,7 @@ for dataset_to_use in working_datasets:
     print("[INFO] Cache path is %s" % dataset_cache_path)
     print("########################################################")
     N_random_sequences_to_assert = 20
-    save_path = "./notebooks/%s/fitness_results/" % dataset_to_use
+    save_path = "./results/%s/fitness_results/" % dataset_to_use
     os.makedirs(save_path, exist_ok=True)
     normed_fitness_path = "%s/new_om_normed_fitness_all.csv" % save_path
     fitness_path = "%s/new_om_fitness_all.csv" % save_path

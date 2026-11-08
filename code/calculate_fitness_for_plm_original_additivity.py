@@ -235,7 +235,7 @@ for dataset_to_use in working_datasets:
     # ASSERT  model.tokenizer.decode(tokenized_sequence[:,working_positions][0].tolist()) == "".join(df.iloc[0][df.columns[si:ei][positions_with_mutations]].tolist())
 
     N_random_sequences_to_assert = 20
-    save_path = "./notebooks/%s/fitness_results/" % dataset_to_use
+    save_path = "./results/%s/fitness_results/" % dataset_to_use
     os.makedirs(save_path, exist_ok=True)
 
     normed_fitness_path = "%s/normed_fitness_all.csv" % save_path
