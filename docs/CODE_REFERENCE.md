@@ -24,7 +24,7 @@ python code/<script>.py --help
 | Component | Purpose | Main inputs and outputs |
 |---|---|---|
 | `collect_gfp_embeddings.py` | Reassembles GFP chunk outputs, optionally selects positions, validates labels/indices, and writes mutation-order tensors. | `--input_csv`, `--model_name`, `--hidden_dim_size`; reads `results/gfp/.../evaluations`, writes `data/gfp/new_embeddings/...`. |
-| `collect_protgym_embeddings.py` | Generic ProtGym chunk collector split by mutation order. | `--input_csv`, `--dataset_name`, `--model_name`, `--hidden_dim_size`; writes `data/<dataset>/new_embeddings/<model>`. |
+| `collect_protgym_embeddings.py` | Generic ProtGym chunk collector split by mutation order. | `--input_csv`, `--dataset_name`, `--model_name`, `--hidden_dim_size`; writes `data/<dataset>/embeddings/<model>`. |
 | `merge_embedding_chunks.py` | Merges `embeddings/y_values/indices_of_nmut_*.pt` files in index order and validates against a dataset CSV. | CLI; use `--dataset` or explicit dataset/folder arguments. |
 | `subset_embedding_chunks.py` | Subsets a parent embedding/token cache into child datasets while preserving indices and optional aggregate files. | CLI; requires `--parent_dir` and `--subset_dirs`; supports `--dry_run`. |
 | `collect_scoring_features_for_representation_analyses.py` | Builds a single feature tensor from one-hot, full/partial/flat/mean embeddings, activities, and selected positions. | CLI; writes the requested `.pt` feature dictionary. |
@@ -38,9 +38,9 @@ python code/<script>.py --help
 | `generate_jobs_for_extensive_model_selection.py` | Generates shell jobs and manifests for the extensive model-selection workflow. | CLI; requires output/data/mutation bounds and one task mode (`--regressor` or classifier option). |
 | `collect_model_selection_scoring_results.py` | Collects scorer outputs into the five standard aggregate CSV groups. | CLI; requires `--cache_path`; optional `--output_dir`. |
 | `train_classifiers_over_embeddings.py` | Trains/evaluates classifiers or regressors over selected embedding models and mutation-order splits. | CLI; requires one or more `--model_name` values. |
-| `train_classifiers_over_ohe.py` | Equivalent baseline/grid workflow over one-hot features. | CLI; dataset defaults to GFP; supports classification/regression and architecture grids. |
+| `train_classifiers_over_ohe.py` | Equivalent controlled-extrapolation workflow over one-hot features. | CLI; discovers available mutation orders and writes architecture-specific results under `data/<dataset>/controlled_extrapolation/one_hot/` by default. |
 | `train_classifiers_over_subsamples_new.py` | Parameterized GFP-style LLM-vs-OHE subsampling experiment. | CLI; configure dataset, embedding directory/model, sample sizes, iterations, and output CSV. |
-| `train_regressors_over_embeddings_subsamples.py` | General LLM-vs-OHE subsampling benchmark for regression or classification. | CLI; accepts dataset/path, sample sizes, models, mutation columns, and output path. |
+| `train_regressors_over_embeddings_subsamples.py` | General LLM-vs-OHE subsampling benchmark for regression or classification. | CLI; writes representation-specific results under `data/<dataset>/subsamples/<representation>/` by default; accepts independent OHE/LLM architectures. |
 | `train_classifiers_over_subsamples.py` | Original hard-coded GFP subsampling experiment retained unchanged as a legacy reproduction script. | Direct execution only after confirming its configuration block and expected GFP embeddings. Prefer the `_new.py` script for new runs. |
 | `transfer_learning_across_layers.py` | Mutation-order transfer learning over embedding layers, delta embeddings, and pooling configurations for NMT/PARD3. | CLI; requires `--dataset {nmt,pard3}` plus output/model options. |
 | `transfer_learning_ohe_grid.py` | Matching one-hot transfer-learning architecture grid for NMT/PARD3. | CLI; requires `--dataset {nmt,pard3}`. |

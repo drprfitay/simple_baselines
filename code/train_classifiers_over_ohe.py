@@ -62,6 +62,16 @@ def parse_hidden_layers(hl_list):
         parsed.append(hl_tuple)
     return parsed
 
+
+def architecture_slug(linreg, hidden_layers, alpha, solver, learning_rate, niters):
+    if linreg:
+        return "linear_regression"
+    hidden = "-".join(str(value) for value in hidden_layers)
+    return (
+        f"mlp_hl-{hidden}_alpha-{alpha:g}_solver-{solver}_"
+        f"lr-{learning_rate:g}_iters-{niters}"
+    )
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_name', type=str, default="gfp", help='Dataset name (gfp, pte, nmt, etc)')
@@ -69,7 +79,18 @@ def main():
     parser.add_argument('--regression', action='store_true', default=False, help='Flag to use regression instead of classification')
     parser.add_argument('--external_labels_column', type=str, default=None,
                         help='If set, use the specified column from the original dataset as labels')
-    parser.add_argument('--ohe_save_dir', type=str, default=None, help="Extra results subfolder name for OHE outputs")
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        default=None,
+        help='Result directory. Defaults to data/<dataset>/controlled_extrapolation/one_hot.',
+    )
+    parser.add_argument(
+        '--ohe_save_dir',
+        type=str,
+        default=None,
+        help='Deprecated output subfolder name under data/<dataset>/controlled_extrapolation/.',
+    )
     parser.add_argument('--only_train_n', type=int, default=None, help='If set, only do one value of n_train')
 
     # Accepts space-separated values, each value can be a comma-separated string for multilayer: "100" or "100,50"
@@ -84,8 +105,12 @@ def main():
     parser.add_argument('--n_start', type=int, default=2,
                         help='Start value for the number of training mutations (inclusive)')
     parser.add_argument('--n_end', type=int, default=3,
-                        help='End value for the number of training mutations (inclusive)')
+                        help='End value for the number of training mutations (exclusive)')
     args = parser.parse_args()
+    if args.output_dir is not None and args.ohe_save_dir is not None:
+        raise ValueError('Use only one of --output_dir and --ohe_save_dir')
+    if args.only_train_n is None and args.n_start >= args.n_end:
+        raise ValueError('--n_start must be smaller than the exclusive --n_end')
 
     # Parse --hl argument into list of tuples of ints (keep full logic, but only use the first element below)
     hidden_layers_list = parse_hidden_layers(args.hl)
@@ -122,9 +147,21 @@ def main():
     niters = args.niters[0]
     lr = args.lr[0]
 
-    for n_train in range(args.n_start, args.n_end):
+    available_mutation_orders = sorted(df[num_muts_col].unique().tolist())
+    train_mutation_orders = (
+        [args.only_train_n]
+        if args.only_train_n is not None
+        else list(range(args.n_start, args.n_end))
+    )
+
+    for n_train in train_mutation_orders:
         n_train_data = n_train
-        n_test_data = list(range(n_train + 1, 11))
+        n_test_data = [order for order in available_mutation_orders if order > n_train]
+        if not n_test_data:
+            raise ValueError(
+                f'No held-out mutation orders above n_train={n_train}; '
+                f'available orders are {available_mutation_orders}'
+            )
         train_indices = (df[num_muts_col] <= n_train) & (df[num_muts_col] > 0)
         X_train = ohe[train_indices]
         y_train = labels_all[train_indices]
@@ -199,29 +236,33 @@ def main():
             test_data.append(evaluation)
 
         test_data_df = pd.DataFrame(test_data)
-        # Folder naming: consistent with embedding script
-        model_str = f"no_gridsearch"
-        results_type = "regression_results" if is_regression else "classification_results"
-        ohe_folder = args.ohe_save_dir if args.ohe_save_dir else model_str
-        folder_name = ohe_folder
-        grid_hl_str = "_".join(str(x) for x in hidden_layers)
-        grid_alpha_str = f"alpha_{alpha}"
-        grid_solver_str = f"solver_{solver}"
-        grid_lr_str = ("lr_{:.1e}".format(lr) if lr < 0.001 else f"lr_{lr}")
-        grid_iter_str = f"iter_{niters}"
-
-        model_name = f"ohe_{grid_hl_str}_{grid_alpha_str}_{grid_solver_str}_{grid_lr_str}_{grid_iter_str}"
-
-        save_dir = os.path.join(
-                "data",
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if args.output_dir is not None:
+            save_dir = os.path.abspath(args.output_dir)
+        elif args.ohe_save_dir is not None:
+            save_dir = os.path.join(
+                base_path,
+                'data',
                 args.dataset_name,
-                f"{args.dataset_name}_regression_results",
-                folder_name,
-                "linreg" if args.linreg else model_name
+                'controlled_extrapolation',
+                args.ohe_save_dir,
+            )
+        else:
+            save_dir = os.path.join(
+                base_path,
+                'data',
+                args.dataset_name,
+                'controlled_extrapolation',
+                'one_hot',
             )
 
         os.makedirs(save_dir, exist_ok=True)
-        out_csv = os.path.join(save_dir, f"ohe_evaluation_train_on_{n_train_data}.csv")
+        architecture = architecture_slug(args.linreg, hidden_layers, alpha, solver, lr, niters)
+        task = 'regression' if is_regression else 'classification'
+        out_csv = os.path.join(
+            save_dir,
+            f"one_hot_{task}_train_on_{n_train_data}_{architecture}.csv",
+        )
         test_data_df.to_csv(out_csv, index=False)
         print(f"Saved evaluation: {out_csv}")
         print(test_data_df)

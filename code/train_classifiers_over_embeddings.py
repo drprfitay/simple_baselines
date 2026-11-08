@@ -2,6 +2,7 @@ import argparse
 import pandas as pd
 import numpy as np
 import os
+import re
 import torch
 import matplotlib.pyplot as plt
 
@@ -33,6 +34,64 @@ try:
 except ImportError:
     sklearn_xgb_available = False
 
+
+def load_tensor(path):
+    try:
+        return torch.load(path, weights_only=True)
+    except TypeError:
+        return torch.load(path)
+
+
+def mutation_orders(embedding_dir):
+    orders = []
+    pattern = re.compile(r"^embeddings_of_nmut_(\d+)\.pt$")
+    for name in os.listdir(embedding_dir):
+        match = pattern.match(name)
+        if match:
+            orders.append(int(match.group(1)))
+    return sorted(orders)
+
+
+def load_mutation_chunk(embedding_dir, nmut):
+    paths = {
+        "labels": os.path.join(embedding_dir, f"y_values_of_nmut_{nmut}.pt"),
+        "indices": os.path.join(embedding_dir, f"indices_of_nmut_{nmut}.pt"),
+        "embeddings": os.path.join(embedding_dir, f"embeddings_of_nmut_{nmut}.pt"),
+    }
+    missing = [path for path in paths.values() if not os.path.isfile(path)]
+    if missing:
+        raise FileNotFoundError(f"Incomplete nmut={nmut} embedding chunk; missing {missing}")
+
+    labels = load_tensor(paths["labels"]).view(-1)
+    indices = load_tensor(paths["indices"]).long().view(-1)
+    embeddings = load_tensor(paths["embeddings"])
+    if embeddings.shape[0] != indices.numel() or indices.numel() != labels.numel():
+        raise ValueError(
+            f"Mismatched nmut={nmut} rows: embeddings={embeddings.shape[0]}, "
+            f"indices={indices.numel()}, labels={labels.numel()}"
+        )
+    return labels, indices, embeddings
+
+
+def embedding_features(embeddings, mean_embeddings):
+    if mean_embeddings:
+        return embeddings.mean(dim=1)
+    return embeddings.reshape(embeddings.shape[0], -1)
+
+
+def training_normalization(features):
+    train_mean = features.mean(dim=0, keepdim=True)
+    train_std = features.std(dim=0, keepdim=True)
+    train_std = torch.where(
+        torch.isfinite(train_std) & (train_std > 0),
+        train_std,
+        torch.ones_like(train_std),
+    )
+    normalized = (features - train_mean) / train_std
+    if not torch.isfinite(normalized).all():
+        raise ValueError("Training embeddings contain non-finite normalized values")
+    return normalized, train_mean, train_std
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', nargs='+', type=str, required=True)
@@ -51,9 +110,11 @@ def main():
     parser.add_argument('--n_start', type=int, default=2,
                         help='Start value for the number of training mutations (inclusive)')
     parser.add_argument('--n_end', type=int, default=3,
-                        help='End value for the number of training mutations (inclusive)')
+                        help='End value for the number of training mutations (exclusive)')
     parser.add_argument("--pca", type=int, default=None, help="Number of PCA components to use")
     parser.add_argument("--min_n", type=int, default=1, help="Minimum number of training mutations")
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Optional result directory. Defaults to the historical dataset result path.")
     parser.add_argument(
         '--classifier_model', 
         type=str, 
@@ -63,19 +124,13 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.n_start >= args.n_end:
+        raise ValueError("--n_start must be smaller than the exclusive --n_end")
+    if args.min_n < 0:
+        raise ValueError("--min_n must be non-negative")
 
     base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    embedding_paths = {
-        "esm_650m" : "%s/data/%s/embeddings/esm_650m" % (base_path, args.dataset_name),
-        "esm_8m" : "%s/data/%s/embeddings/esm_8m" % (base_path, args.dataset_name),
-        "esm_35m" : "%s/data/%s/embeddings/esm_35m" % (base_path, args.dataset_name),
-        "esm_150m" : "%s/data/%s/embeddings/esm_150m" % (base_path, args.dataset_name),
-        "esm_3b" : "%s/data/%s/embeddings/esm_3b" % (base_path, args.dataset_name),
-        "progen2-small" : "%s/data/%s/embeddings/progen2-small" % (base_path, args.dataset_name),
-        "progen2-medium" : "%s/data/%s/embeddings/progen2-medium" % (base_path, args.dataset_name),
-        "ankh3-large" : "%s/data/%s/embeddings/ankh3-large" % (base_path, args.dataset_name),
-        "prot_bert" : "%s/data/%s/embeddings/prot_bert" % (base_path, args.dataset_name)
-    }
+    embedding_root = os.path.join(base_path, "data", args.dataset_name, "embeddings")
 
     external_labels = None
 
@@ -89,34 +144,60 @@ def main():
             external_labels = (external_labels > np.median(external_labels)).astype(int)
             external_labels = 1 - external_labels # evaluate_classifier in this implementation expects inverted labels
             
-        print("Using external_lables:")
-        print(external_labels)
+        print(
+            f"Using external labels from {csv_path}:{args.external_labels_column} "
+            f"(n={len(external_labels)}, min={np.min(external_labels):.4g}, max={np.max(external_labels):.4g})"
+        )
 
     for model_name in args.model_name:
         print(f"Training classifiers over {model_name} embeddings")
 
-        if model_name not in embedding_paths:
-            raise ValueError(f"Model name '{model_name}' not found in available embedding paths: {list(embedding_paths.keys())}")
-
-        classifier_embeddings_path = embedding_paths[model_name]
+        classifier_embeddings_path = os.path.join(embedding_root, model_name)
+        if not os.path.isdir(classifier_embeddings_path):
+            available = sorted(
+                name for name in os.listdir(embedding_root)
+                if os.path.isdir(os.path.join(embedding_root, name))
+            ) if os.path.isdir(embedding_root) else []
+            raise FileNotFoundError(
+                f"Embedding directory does not exist: {classifier_embeddings_path}. "
+                f"Available models for {args.dataset_name}: {available}"
+            )
         print(f"Classifier embeddings path: {classifier_embeddings_path}")
 
+        available_orders = mutation_orders(classifier_embeddings_path)
+        if not available_orders:
+            raise FileNotFoundError(
+                f"No embeddings_of_nmut_*.pt files found in {classifier_embeddings_path}"
+            )
+        print(f"Available mutation orders: {available_orders}")
+
         if args.delta_embeddings:
-            wt_embedding = torch.load(os.path.join(classifier_embeddings_path, "embeddings_of_nmut_0.pt"))
+            if 0 not in available_orders:
+                raise ValueError("--delta_embeddings requires embeddings_of_nmut_0.pt")
+            wt_embedding = load_tensor(os.path.join(classifier_embeddings_path, "embeddings_of_nmut_0.pt"))
 
 
         for n_train in range(args.n_start, args.n_end):
             train_data = {}
             n_train_data = n_train
-            n_test_data = list(range(n_train + 1, 11))
+            train_orders = list(range(args.min_n, n_train_data + 1))
+            missing_train_orders = [order for order in train_orders if order not in available_orders]
+            if missing_train_orders:
+                raise ValueError(
+                    f"Missing training mutation orders {missing_train_orders} in {classifier_embeddings_path}"
+                )
+            n_test_data = [order for order in available_orders if order > n_train_data]
+            if not n_test_data:
+                raise ValueError(
+                    f"No held-out mutation orders above n_train={n_train_data}; "
+                    f"available orders are {available_orders}"
+                )
 
-            for i in range(args.min_n, n_train_data + 1):
-                labels = torch.load(os.path.join(classifier_embeddings_path, "y_values_of_nmut_%d.pt" % i))
-                indices = torch.load(os.path.join(classifier_embeddings_path, "indices_of_nmut_%d.pt" % i)).to(torch.int64)
-                embeddings = torch.load(os.path.join(classifier_embeddings_path, "embeddings_of_nmut_%d.pt" % i))
+            for i in train_orders:
+                labels, indices, embeddings = load_mutation_chunk(classifier_embeddings_path, i)
 
                 if external_labels is not None:
-                    labels = torch.from_numpy(external_labels[indices].reshape(-1))
+                    labels = torch.from_numpy(external_labels[indices.numpy()].reshape(-1))
                 
                 if args.delta_embeddings:
                     print(f"Subtracting WT embedding from {model_name} embeddings")
@@ -153,26 +234,18 @@ def main():
                 "verbose": False
             }
 
-            if args.mean_embeddings:
-                flat_embeddings = embeddings_all.mean(axis=1)
-            else:
-                flat_embeddings = embeddings_all.reshape(embeddings_all.shape[0], -1)
-            normalized_embeddings = flat_embeddings - flat_embeddings.mean(dim=0, keepdim=True)
-            train_std = flat_embeddings.std(dim=0, keepdim=True)
-            normalized_embeddings = normalized_embeddings / train_std
+            flat_embeddings = embedding_features(embeddings_all, args.mean_embeddings)
+            normalized_embeddings, train_mean, train_std = training_normalization(flat_embeddings)
+            train_features = normalized_embeddings.numpy()
 
             if args.pca is not None:
                 train_pca = PCA(n_components=args.pca)
-                print("########################")
-                print(normalized_embeddings.shape)
-                print("########################")
-                train_pca.fit(normalized_embeddings.numpy())
-                normalized_embeddings = ((normalized_embeddings - train_pca.mean_) @ train_pca.components_.T)
+                train_features = train_pca.fit_transform(train_features)
 
             print("Fitting model (%s) over %dx%d embeddings to %d labels [%d mutations]" % 
                         (args.classifier_model,
-                         normalized_embeddings.shape[0], 
-                         normalized_embeddings.shape[1], 
+                         train_features.shape[0],
+                         train_features.shape[1],
                          len((labels_all)),
                          n_train_data))
 
@@ -188,22 +261,22 @@ def main():
             if args.classifier_model == 'mlp':
                 if args.regression:
                     model = MLPRegressor(hidden_layer_sizes=args.hl, **mlp_base_parameters)
-                    model.fit(normalized_embeddings.numpy(), labels_all.numpy().astype(float))
+                    model.fit(train_features, labels_all.numpy().astype(float))
                 else:
                     model = MLPClassifier(hidden_layer_sizes=args.hl, **mlp_base_parameters)
-                    model.fit(normalized_embeddings.numpy(), labels_all)
+                    model.fit(train_features, labels_all)
             elif args.classifier_model == 'ridgeregression':
                 if args.regression:
                     model = Ridge()
-                    model.fit(normalized_embeddings.numpy(), labels_all.numpy().astype(float))
+                    model.fit(train_features, labels_all.numpy().astype(float))
                 else:
                     model = RidgeClassifier(alpha=1.0, solver="auto", max_iter=args.niters)
-                    model.fit(normalized_embeddings.numpy(), labels_all.numpy())
+                    model.fit(train_features, labels_all.numpy())
             elif args.classifier_model == 'lasso':
                 if not args.regression:
                     raise ValueError("Lasso is only supported for regression tasks. Use --regression.")
                 model = Lasso()
-                model.fit(normalized_embeddings.numpy(), labels_all.numpy().astype(float))
+                model.fit(train_features, labels_all.numpy().astype(float))
             elif args.classifier_model == 'logisticregression':
                 if args.regression:
                     raise ValueError("LogisticRegression is only supported for classification tasks. Do not use --regression.")
@@ -215,106 +288,105 @@ def main():
                     max_iter=args.niters,
                     n_jobs=-1
                 )
-                model.fit(normalized_embeddings.numpy(), labels_all.numpy())
+                model.fit(train_features, labels_all.numpy())
             elif args.classifier_model == 'xgboost':
                 if not sklearn_xgb_available:
                     raise ImportError("scikit-learn's HistGradientBoosting (recommended xgboost-alternative) is not available. Please ensure scikit-learn >=0.21 is installed.")
                 if args.regression:
                     model = GradientBoostingRegressor(n_estimators=args.niters)
-                    model.fit(normalized_embeddings.numpy(), labels_all.numpy().astype(float))
+                    model.fit(train_features, labels_all.numpy().astype(float))
                 else:
                     model = GradientBoostingClassifier(n_estimators=args.niters)
-                    model.fit(normalized_embeddings.numpy(), labels_all.numpy())
+                    model.fit(train_features, labels_all.numpy())
             else:
                 raise ValueError("Unknown classifier_model selected: %s" % args.classifier_model)
 
             test_data = []
             for i in n_test_data:
-
-                labels = torch.load(os.path.join(classifier_embeddings_path, "y_values_of_nmut_%d.pt" % i))
-                indices = torch.load(os.path.join(classifier_embeddings_path, "indices_of_nmut_%d.pt" % i))
-                embeddings = torch.load(os.path.join(classifier_embeddings_path, "embeddings_of_nmut_%d.pt" % i))
+                labels, indices, embeddings = load_mutation_chunk(classifier_embeddings_path, i)
 
                 if external_labels is not None:
-                    labels = torch.from_numpy(external_labels[indices].reshape(-1))                
+                    labels = torch.from_numpy(external_labels[indices.numpy()].reshape(-1))
 
                 if len(labels) == 0:
                     print(f"Skipping test n_muts={i}, no samples.")
                     continue
 
-                if args.mean_embeddings:
-                    flat_embeddings = embeddings.mean(axis=1)
-                else:
-                    flat_embeddings = embeddings.reshape(embeddings.shape[0], -1)
-                    
-                normalized_embeddings = flat_embeddings - flat_embeddings.mean(dim=0, keepdim=True)
-                normalized_embeddings = normalized_embeddings / train_std
+                if args.delta_embeddings:
+                    embeddings = embeddings - wt_embedding
+
+                flat_embeddings = embedding_features(embeddings, args.mean_embeddings)
+                normalized_embeddings = (flat_embeddings - train_mean) / train_std
+                if not torch.isfinite(normalized_embeddings).all():
+                    raise ValueError(f"Test nmut={i} contains non-finite normalized values")
+                test_features = normalized_embeddings.numpy()
 
                 if args.pca is not None:
-                    normalized_embeddings = (normalized_embeddings - train_pca.mean_) @ train_pca.components_.T
+                    test_features = train_pca.transform(test_features)
 
                 # Predict and evaluate
                 if args.regression:
-                    preds = model.predict(normalized_embeddings.numpy())
+                    preds = model.predict(test_features)
                     preds_np = np.asarray(preds)
-                    nan_indices = np.isnan(preds_np)
-                    inf_indices = np.isinf(preds_np)
-                    print("Indices of NaN in preds:", np.where(nan_indices)[0])
-                    print("Indices of Inf in preds:", np.where(inf_indices)[0])
-                    print(labels)
-                    print(labels.numpy().mean())
-                    print(labels.numpy().std())
-                    print(preds_np)
-                    print(preds_np.mean())
-                    print(preds_np.std())
-                    print(preds_np)
-                    preds_np = np.asarray(labels)
-                    nan_indices = np.isnan(preds_np)
-                    inf_indices = np.isinf(preds_np)
-                    print("Indices of NaN in preds:", np.where(nan_indices)[0])
-                    print("Indices of Inf in preds:", np.where(inf_indices)[0])
-                    print("########################")
+                    if not np.isfinite(preds_np).all():
+                        raise ValueError(f"Model produced non-finite predictions for nmut={i}")
                     correlation = spearmanr(preds, labels.numpy())
                     evaluation = {
                         "correlation": correlation[0],
                         "p_value": correlation[1],
                     }
-                    print(correlation)
-                    print("########################")
                 else:
                     # For classifiers, always use probabilities and 0/1 threshold at 0.5, if possible
                     try:
-                        predictions_proba = model.predict_proba(normalized_embeddings.numpy())
+                        predictions_proba = model.predict_proba(test_features)
                         predictions = (predictions_proba[:, 1] > 0.5).astype(int)
                         evaluation = evaluate_classifier(predictions_proba[:, 1], predictions, labels.numpy())
                     except AttributeError:
                         # Some classifiers might not have predict_proba, e.g., some linear models or HistGradientBoostingClassifier returns both predict_proba (for binary) or decision_function (for multiclass)
                         try:
-                            predictions_proba = model.predict_proba(normalized_embeddings.numpy())
+                            predictions_proba = model.predict_proba(test_features)
                             predictions = (predictions_proba[:, 1] > 0.5).astype(int)
                             evaluation = evaluate_classifier(predictions_proba[:, 1], predictions, labels.numpy())
                         except Exception:
-                            predictions = model.predict(normalized_embeddings.numpy())
+                            predictions = model.predict(test_features)
                             evaluation = evaluate_classifier(predictions, predictions, labels.numpy())
 
                 print("Evaluation for %d mutations: %s" % (i, evaluation))
-
-                test_data.append(evaluation)
 
                 evaluation["test_mutations"] = i
                 evaluation["train_mutations"] = n_train_data
                 evaluation["classifier"] = classifier_embeddings_path
                 evaluation["model_name"] = model_name
                 evaluation["clf_type"] = args.classifier_model
+                test_data.append(evaluation)
 
             folder_name = "delta_grid_searched" if args.delta_embeddings else "new_grid_searched"
             folder_name = folder_name + "_mean" if args.mean_embeddings else folder_name + "_flat"
 
-            if args.regression:
-                save_dir = f"data/{args.dataset_name}/{args.dataset_name}_regression_results_32/{folder_name}/{model_name}"
+            if args.output_dir is not None:
+                save_dir = os.path.abspath(args.output_dir)
+            elif args.regression:
+                result_folder = "controlled_extrapolation"
+                if args.delta_embeddings:
+                    result_folder += "_delta"
+                if not args.mean_embeddings:
+                    result_folder += "_flat"
+                save_dir = os.path.join(
+                    base_path,
+                    "data",
+                    args.dataset_name,
+                    result_folder,
+                    model_name,
+                )
             else:
-                save_dir = f"data/{args.dataset_name}_classification_results/{folder_name}/{model_name}"
-            if args.pca is not None:
+                save_dir = os.path.join(
+                    base_path,
+                    "data",
+                    f"{args.dataset_name}_classification_results",
+                    folder_name,
+                    model_name,
+                )
+            if args.pca is not None and args.output_dir is None:
                 save_dir = save_dir + f"_pca_{args.pca}"
             print(f"Saving results to {save_dir}")
 

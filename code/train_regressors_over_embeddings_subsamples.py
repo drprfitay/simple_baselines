@@ -45,6 +45,12 @@ datasets_and_activity = {
     "casp": {"path": "./data/casp/casp.csv", "activity_col": "activity"}
 }
 
+def load_tensor(path):
+    try:
+        return torch.load(path, weights_only=True)
+    except TypeError:
+        return torch.load(path)
+
 def get_relevant_columns_gfp_protgym(df, first_col, last_col):
     si = np.where(df.columns == first_col)[0][0]
     ei = np.where(df.columns == last_col)[0][0]+1
@@ -197,12 +203,100 @@ def fit_predict_mlp(x_train, y_train, x_test, hidden_layers, params, classifier=
     preds = model.predict(x_test)
     return preds, preds
 
+
+def mlp_architecture_slug(hidden_layers, solver, alpha, learning_rate, max_iter):
+    hidden = "-".join(str(value) for value in hidden_layers)
+    return (
+        f"mlp_hl-{hidden}_alpha-{alpha:g}_solver-{solver}_"
+        f"lr-{learning_rate:g}_iters-{max_iter}"
+    )
+
+
+def default_model_output_name(model_name):
+    if model_name == "saprot_aav_sites":
+        return "saprot"
+    return model_name
+
+
+def representation_result_paths(args, dataset, embedding_paths, model_output_names):
+    output_root = args.output_root
+    if output_root is None:
+        output_root = os.path.join(args.base_path, "data", dataset, "subsamples")
+    output_root = os.path.abspath(output_root)
+
+    task = "classification" if args.classifier else "regression"
+    pooling = "mean" if args.mean_embeddings else "flat"
+    ohe_architecture = mlp_architecture_slug(
+        args.ohe_hl,
+        args.ohe_solver,
+        args.ohe_alpha,
+        args.ohe_learning_rate_init,
+        args.ohe_max_iter,
+    )
+    llm_architecture = mlp_architecture_slug(
+        args.llm_hl,
+        args.llm_solver,
+        args.llm_alpha,
+        args.llm_learning_rate_init,
+        args.llm_max_iter,
+    )
+
+    paths = {
+        "one_hot": os.path.join(
+            output_root,
+            "one_hot",
+            f"{task}_{ohe_architecture}.csv",
+        )
+    }
+    for model_name in embedding_paths:
+        paths[model_name] = os.path.join(
+            output_root,
+            model_output_names[model_name],
+            f"{task}_{pooling}_{llm_architecture}.csv",
+        )
+    return paths
+
+
+def save_representation_results(result_df, result_paths, mean_embeddings, combined_output=None):
+    shared_columns = [column for column in ["N_samples", "iter"] if column in result_df.columns]
+
+    one_hot_columns = shared_columns + [
+        column for column in result_df.columns
+        if column.endswith("_ohe")
+    ]
+    one_hot_path = result_paths["one_hot"]
+    os.makedirs(os.path.dirname(one_hot_path), exist_ok=True)
+    result_df[one_hot_columns].to_csv(one_hot_path, index=False)
+    print(f"Saved one-hot subsample results: {one_hot_path}")
+
+    pooling = "mean" if mean_embeddings else "flat"
+    for model_name, path in result_paths.items():
+        if model_name == "one_hot":
+            continue
+        suffix = f"_{model_name}_{pooling}"
+        model_columns = shared_columns + [
+            column for column in result_df.columns
+            if column.endswith(suffix)
+        ]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        result_df[model_columns].to_csv(path, index=False)
+        print(f"Saved {model_name} subsample results: {path}")
+
+    if combined_output is not None:
+        combined_output = os.path.abspath(combined_output)
+        combined_dir = os.path.dirname(combined_output)
+        if combined_dir:
+            os.makedirs(combined_dir, exist_ok=True)
+        result_df.to_csv(combined_output, index=False)
+        print(f"Saved combined subsample results: {combined_output}")
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_name', type=str, default="nmt", help='Dataset name')
     parser.add_argument('--dataset_path', type=str, default=None, help='Explicit dataset CSV path. Defaults to <base_path>/data/<dataset>/<dataset>.csv for non-legacy datasets.')
     parser.add_argument('--base_path', type=str, default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), help='Base path')
-    parser.add_argument('--output_csv', type=str, default=None, help='Where to save results')
+    parser.add_argument('--output_csv', type=str, default=None, help='Optional combined result CSV for backward compatibility.')
+    parser.add_argument('--output_root', type=str, default=None, help='Root for representation-specific results. Defaults to data/<dataset>/subsamples.')
     parser.add_argument('--iters', type=int, default=30, help='Number of iterations for each sample size')
     parser.add_argument('--n_samples', type=int, nargs='+', default=[5, 10, 25, 50, 75, 100, 125, 150, 200, 250, 500, 1000], help='Training sample sizes per experiment')
     parser.add_argument('--shuffle_labels', action='store_true', default=False, help='Shuffle labels for control analysis')
@@ -217,6 +311,7 @@ def main():
     parser.add_argument('--ohe_max_iter', type=int, default=100, help='Max iterations for OHE MLP')
     parser.add_argument('--llm_max_iter', type=int, default=100, help='Max iterations for LLM MLP')
     parser.add_argument('--model_names', nargs='+', default=None, help='Limit to subset of embedding models')
+    parser.add_argument('--model_output_names', nargs='+', default=None, help='Output folder names corresponding to --model_names (for example: saprot).')
     parser.add_argument('--first_col', type=str, default=None, help='First mutation column for OHE. Required for datasets not in the legacy defaults.')
     parser.add_argument('--last_col', type=str, default=None, help='Last mutation column for OHE. Required for datasets not in the legacy defaults.')
     parser.add_argument('--classifier', action='store_true', default=False, help='Run classification instead of regression.')
@@ -253,6 +348,25 @@ def main():
     print("Sanity check: a few labels:", labels[:8].tolist())
     original_labels = labels.clone()
     embedding_paths = get_embedding_paths(dataset, base_path, args.model_names)
+    if args.model_output_names is not None:
+        if len(args.model_output_names) != len(embedding_paths):
+            raise ValueError("--model_output_names must have one value per selected embedding model")
+        model_output_names = dict(zip(embedding_paths, args.model_output_names))
+    else:
+        model_output_names = {
+            model_name: default_model_output_name(model_name)
+            for model_name in embedding_paths
+        }
+    if len(set(model_output_names.values())) != len(model_output_names):
+        raise ValueError(
+            "Model output folder names must be unique; provide explicit --model_output_names"
+        )
+    result_paths = representation_result_paths(
+        args,
+        dataset,
+        embedding_paths,
+        model_output_names,
+    )
 
     labels_all = {}
     indices_all = {}
@@ -261,9 +375,32 @@ def main():
     for model_name, model_path in embedding_paths.items():
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Embedding path {model_path} does not exist.")
-        labels_emb = torch.load(os.path.join(model_path, "y_values.pt"))
-        indices_emb = torch.load(os.path.join(model_path, "indices.pt"))
-        embeddings = torch.load(os.path.join(model_path, "embeddings.pt"))
+        tensor_paths = {
+            "labels": os.path.join(model_path, "y_values.pt"),
+            "indices": os.path.join(model_path, "indices.pt"),
+            "embeddings": os.path.join(model_path, "embeddings.pt"),
+        }
+        missing = [path for path in tensor_paths.values() if not os.path.isfile(path)]
+        if missing:
+            raise FileNotFoundError(
+                f"Embedding model {model_name!r} is not merged; missing {missing}. "
+                "Run code/merge_embedding_chunks.py on this embedding directory first."
+            )
+
+        labels_emb = load_tensor(tensor_paths["labels"]).view(-1)
+        indices_emb = load_tensor(tensor_paths["indices"]).long().view(-1)
+        embeddings = load_tensor(tensor_paths["embeddings"])
+        if embeddings.shape[0] != indices_emb.numel() or indices_emb.numel() != labels_emb.numel():
+            raise ValueError(
+                f"Mismatched rows for {model_name}: embeddings={embeddings.shape[0]}, "
+                f"indices={indices_emb.numel()}, labels={labels_emb.numel()}"
+            )
+        if indices_emb.numel() == 0:
+            raise ValueError(f"No embedding rows found for {model_name}")
+        if indices_emb.min().item() < 0 or indices_emb.max().item() >= len(df):
+            raise ValueError(f"Embedding indices for {model_name} fall outside the {len(df)} dataset rows")
+        if torch.unique(indices_emb).numel() != indices_emb.numel():
+            raise ValueError(f"Duplicate embedding indices found for {model_name}")
         indices_np = indices_emb.detach().cpu().numpy().astype(int)
 
         # Apply mean or flatten, depending on flag
@@ -271,10 +408,19 @@ def main():
             emb_proc = embeddings.mean(axis=1)
         else:
             emb_proc = embeddings.reshape(embeddings.shape[0], -1)
+        del embeddings
 
         # Normalize embeddings
         normalized_embeddings = emb_proc - emb_proc.mean(dim=0, keepdim=True)
-        normalized_embeddings = normalized_embeddings / emb_proc.std(dim=0, keepdim=True)
+        embedding_std = emb_proc.std(dim=0, keepdim=True)
+        embedding_std = torch.where(
+            torch.isfinite(embedding_std) & (embedding_std > 0),
+            embedding_std,
+            torch.ones_like(embedding_std),
+        )
+        normalized_embeddings = normalized_embeddings / embedding_std
+        if not torch.isfinite(normalized_embeddings).all():
+            raise ValueError(f"Non-finite normalized embeddings found for {model_name}")
         if is_classifier:
             labels_emb = torch.tensor(as_classifier_labels(labels_emb.detach().cpu().numpy(), args.classification_threshold))
         labels_all[model_name] = labels_emb
@@ -313,14 +459,6 @@ def main():
     }
 
     all_results = []
-    output_csv = args.output_csv
-    if output_csv is None:
-        task_name = "classification" if is_classifier else "regression"
-        output_csv = f"data/{dataset}/{task_name}_result_by_training_samples.csv"
-    output_dir = os.path.dirname(output_csv)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-
     # Always run both (regular + shuffled) if shuffle_labels is set
     shuffle_modes = [False, True] if args.shuffle_labels else [False]
 
@@ -405,15 +543,25 @@ def main():
             print(result_dict)
             # Save every 5th iteration in the loop, but only for the last shuffle mode in the list (to avoid duplicate saves per iter)
             if (iter + 1) % 5 == 0 and shuffle == shuffle_modes[-1]:
-                pd.DataFrame(all_results).to_csv(output_csv, index=False)
+                save_representation_results(
+                    pd.DataFrame(all_results),
+                    result_paths,
+                    args.mean_embeddings,
+                    combined_output=args.output_csv,
+                )
     result_df = pd.DataFrame(all_results)
-    result_df.to_csv(output_csv, index=False)
+    save_representation_results(
+        result_df,
+        result_paths,
+        args.mean_embeddings,
+        combined_output=args.output_csv,
+    )
     print(result_df)
 
 if __name__ == '__main__':
     main()
 
 # Example run:
-# python code/train_regressors_over_embeddings_subsamples.py --dataset_name nmt --base_path . --iters 10 --n_samples 1 5 10 25 --llm_hl 200 20 --ohe_hl 32 --output_csv outputs/nmt_regression_results.csv
+# python code/train_regressors_over_embeddings_subsamples.py --dataset_name nmt --base_path . --iters 10 --n_samples 1 5 10 25 --llm_hl 200 20 --ohe_hl 32 --output_root data/nmt/subsamples
 # Add --mean_embeddings for mean pooling:
 # python train_regressors_over_embeddings_subsamples.py ... --mean_embeddings

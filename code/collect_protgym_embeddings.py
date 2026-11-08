@@ -12,7 +12,12 @@ parser.add_argument("--dataset_name", type=str, default="gfp", help="Name of the
 parser.add_argument("--mutations_to_select", type=int, nargs="+", default=None, help="num_muts values to save. Defaults to 0 through 11.")
 parser.add_argument("--num_muts_colname", type=str, default="num_muts")
 parser.add_argument("--evaluation_dir", type=str, default=None, help="Explicit directory containing completed chunk folders.")
-parser.add_argument("--output_dir", type=str, default=None, help="Explicit directory for collected mutation-order tensors.")
+parser.add_argument(
+    "--output_dir",
+    type=str,
+    default=None,
+    help="Directory for collected mutation-order tensors. Defaults to data/<dataset>/embeddings/<model>.",
+)
 
 
 args = parser.parse_args()
@@ -30,7 +35,7 @@ intermediate_result_paths = [
     args.evaluation_dir or "%s/results/%s/%s/evaluations" % (base_path, args.dataset_name, args.model_name)
 ]
 final_save_path = [
-    args.output_dir or "%s/data/%s/new_embeddings/%s" % (base_path, args.dataset_name, args.model_name)
+    args.output_dir or "%s/data/%s/embeddings/%s" % (base_path, args.dataset_name, args.model_name)
 ]
 hidden_dim_size = [args.hidden_dim_size]
 mutations_to_select = args.mutations_to_select if args.mutations_to_select is not None else list(range(0, 12))

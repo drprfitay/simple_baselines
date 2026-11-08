@@ -37,7 +37,17 @@ python code/embedding_engine.py \
   --specific_job_i 0
 ```
 
-Repeat `--specific_job_i` for the remaining rows in `key_dataset.csv`, or use the LSF worker path on a configured cluster. In the current implementation, `embed_sequences`, `embed_dataset`, and `embed_view_job_file` are placeholders, and local `execute_workers` is not implemented.
+Repeat `--specific_job_i` for the remaining rows in `key_dataset.csv`, use the LSF worker path on a configured cluster, or launch local worker subprocesses with:
+
+```bash
+python code/embedding_engine.py \
+  --action execute_workers \
+  --jobs_path results/pard3/esm_8m/jobs_YYYYMMDD_HHMMSS_parallel \
+  --job_executing_type local \
+  --n_workers 1
+```
+
+Local execution waits for all workers and records their logs, PIDs, commands, and return codes under the timestamped `job_execution_*` directory. Each worker loads a separate model copy, so increase `--n_workers` only when memory permits. `embed_sequences`, `embed_dataset`, and `embed_view_job_file` remain placeholders.
 
 ### `dataset.py`
 
@@ -130,7 +140,7 @@ If embeddings contain the full sequence, add `--positions_to_select <positions..
 
 ### `collect_protgym_embeddings.py`
 
-Collect PARD3 ESM2 8M chunks from `results/pard3/esm_8m/evaluations` into `data/pard3/new_embeddings/esm_8m`:
+Collect PARD3 ESM2 8M chunks from `results/pard3/esm_8m/evaluations` into `data/pard3/embeddings/esm_8m`:
 
 ```bash
 python code/collect_protgym_embeddings.py \
@@ -229,6 +239,27 @@ python code/train_classifiers_over_embeddings.py \
 
 The current implementation uses `range(n_start, n_end)`, so `--n_end 6` trains through mutation order 5. Use `--n_end 7` if order 6 must also be a training threshold.
 
+Run the default MLP regressor on mean-pooled CASP SaProt AAV-site embeddings,
+training on single mutants and evaluating mutation orders 2 through 18:
+
+```bash
+conda run -n esm_env python code/train_classifiers_over_embeddings.py \
+  --model_name saprot_aav_sites \
+  --dataset_name casp \
+  --mean_embeddings \
+  --regression \
+  --external_labels_column activity \
+  --n_start 1 \
+  --n_end 2 \
+  --output_dir data/casp/controlled_extrapolation/saprot
+```
+
+Embedding model directories and available mutation orders are discovered from
+`data/<dataset>/embeddings/<model>/`. The default MLP uses one 100-unit hidden
+layer and at most 50 iterations; increase `--niters` if it does not converge.
+Without `--output_dir`, regression results default to
+`data/<dataset>/controlled_extrapolation/<model>/`.
+
 ### `train_classifiers_over_ohe.py`
 
 Matching controlled-extrapolation regression over one-hot encoding:
@@ -243,6 +274,24 @@ python code/train_classifiers_over_ohe.py \
 ```
 
 The accepted option is `--dataset_name`, not `--dataset`. As above, `n_end` is exclusive in the current implementation.
+
+For CASP, use the default MLP regressor and save architecture-specific files
+under `data/casp/controlled_extrapolation/one_hot/`:
+
+```bash
+conda run -n esm_env python code/train_classifiers_over_ohe.py \
+  --dataset_name casp \
+  --regression \
+  --external_labels_column activity \
+  --n_start 1 \
+  --n_end 6 \
+  --niters 200
+```
+
+Available mutation orders are read from the dataset, so CASP is evaluated
+through order 18. Use `--hl 100,50`, `--alpha`, `--op`, `--lr`, and `--niters`
+to override the MLP architecture and optimizer. The architecture is included
+in each output filename.
 
 ### `train_regressors_over_embeddings_subsamples.py`
 
@@ -259,6 +308,27 @@ python code/train_regressors_over_embeddings_subsamples.py \
 ```
 
 Regression is the default. Use `--classifier` for classification and `--mean_embeddings` to mean-pool position embeddings instead of flattening them.
+
+For the collected CASP SaProt AAV-site embeddings:
+
+```bash
+conda run -n esm_env python code/train_regressors_over_embeddings_subsamples.py \
+  --dataset_name casp \
+  --dataset_path data/casp/casp.csv \
+  --external_labels_column activity \
+  --model_names saprot_aav_sites \
+  --model_output_names saprot \
+  --mean_embeddings \
+  --n_samples 100 200 500 1000 5000 \
+  --iters 10 \
+  --output_root data/casp/subsamples
+```
+
+This single matched-split run writes one-hot-only columns to
+`data/casp/subsamples/one_hot/` and SaProt-only columns to
+`data/casp/subsamples/saprot/`. Architecture-specific filenames prevent
+different MLP settings from overwriting each other. Override the two models
+independently with the `--ohe_*` and `--llm_*` architecture options.
 
 ### `train_classifiers_over_subsamples_new.py`
 

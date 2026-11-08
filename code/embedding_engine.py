@@ -11,6 +11,9 @@ import os
 import datetime
 import json
 import re
+import shlex
+import subprocess
+import sys
 
 CONDA_ENV_NAME = "esm_env"
 KEY_DATASET_LOG_PATH = "all_keydatasets_log.csv"
@@ -565,7 +568,7 @@ def embed_parallel(args):
     # If 'execute_after_parallel_generation' is set to True, execute workers immediately
     if hasattr(args, "execute_after_parallel_generation") and args.execute_after_parallel_generation:
         execute_workers(args)
-        print(f"[INFO] Now executing workers for job: {args_args_path}")
+        print(f"[INFO] Worker dispatch complete for job: {args_args_path}")
 
 def embed_view_job_file(args):
     pass
@@ -578,18 +581,26 @@ def execute_workers(args):
 
     if not os.path.exists(jobs_path):
         raise FileNotFoundError(f"jobs_path does not exist: {jobs_path}")
+
+    if args.n_workers < 1:
+        raise ValueError("n_workers must be at least 1.")
     
     
     if hasattr(args, "specific_job_path") and args.specific_job_path is not None:
         specific_job_path = args.specific_job_path
         print(f"[INFO] args contains 'specific_job_path': {specific_job_path}")
-        cmd = f"python {os.path.basename(__file__)} --action specific_job --jobs_path {jobs_path} --specific_job_path {specific_job_path}"
+        worker_args = ["--action", "specific_job", "--jobs_path", jobs_path,
+                       "--specific_job_path", specific_job_path]
     elif hasattr(args, "specific_job_i") and args.specific_job_i is not None:
         specific_job_i = int(args.specific_job_i)
         print(f"[INFO] args contains 'specific_job_i': {specific_job_i}")
-        cmd = f"python {os.path.basename(__file__)} --action specific_job --jobs_path {jobs_path} --specific_job_i {specific_job_i}"
+        worker_args = ["--action", "specific_job", "--jobs_path", jobs_path,
+                       "--specific_job_i", str(specific_job_i)]
     else:
-        cmd = f"python {os.path.basename(__file__)} --action worker --jobs_path {jobs_path}"
+        worker_args = ["--action", "worker", "--jobs_path", jobs_path]
+
+    lsf_cmd = shlex.join(["python", os.path.basename(__file__), *worker_args])
+    local_cmd = [sys.executable, "-u", os.path.abspath(__file__), *worker_args]
 
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     job_exec_lib_name = f"job_execution_{timestamp}"
@@ -600,10 +611,11 @@ def execute_workers(args):
     print(f"[INFO] Created job execution library at: {job_exec_lib_path}")
 
     workers_metadata = []
+    local_workers = []
     for i in range(args.n_workers):
         if args.job_executing_type == "lsf":
             job_metadata = \
-                run_lsf_job(cmd, 
+                run_lsf_job(lsf_cmd,
                             job_exec_lib_path,
                             os.path.join(os.getcwd(), "code"),
                             CONDA_ENV_NAME,
@@ -615,16 +627,95 @@ def execute_workers(args):
                                      "worker_idx": i})
 
         elif args.job_executing_type == "local":
-            # ToDo: add local job execution
-            raise NotImplementedError("Local job execution is not implemented yet.")
+            output_dir = os.path.join(job_exec_lib_path, "job_outputs")
+            os.makedirs(output_dir, exist_ok=True)
+            out_file = os.path.join(output_dir, f"out_file_worker_local_{i}.log")
+            err_file = os.path.join(output_dir, f"err_file_worker_local_{i}.log")
+            out_handle = open(out_file, "w")
+            err_handle = open(err_file, "w")
+
+            try:
+                process = subprocess.Popen(
+                    local_cmd,
+                    cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    stdout=out_handle,
+                    stderr=err_handle,
+                )
+            except Exception:
+                out_handle.close()
+                err_handle.close()
+                for local_worker in local_workers:
+                    local_worker["process"].terminate()
+                for local_worker in local_workers:
+                    local_worker["process"].wait()
+                    local_worker["out_handle"].close()
+                    local_worker["err_handle"].close()
+                raise
+
+            metadata = {
+                "script_path": os.path.abspath(__file__),
+                "err_file": err_file,
+                "out_file": out_file,
+                "worker_idx": i,
+                "pid": process.pid,
+                "command": shlex.join(local_cmd),
+                "returncode": None,
+            }
+            workers_metadata.append(metadata)
+            local_workers.append({
+                "process": process,
+                "out_handle": out_handle,
+                "err_handle": err_handle,
+                "metadata": metadata,
+            })
+            print(f"[INFO] Started local worker {i} with PID {process.pid}")
         else:
             raise ValueError(f"Unknown job_executing_type: {args.job_executing_type}")
 
     workers_metadata_csv_path = os.path.join(job_exec_lib_path, "workers_metadata.csv")
     df = pd.DataFrame(workers_metadata)
     df.to_csv(workers_metadata_csv_path, index=False)
-    
+
     print(f"[INFO] Wrote workers metadata to: {workers_metadata_csv_path}")
+
+    if local_workers:
+        print(f"[INFO] Waiting for {len(local_workers)} local workers to finish.")
+        try:
+            for local_worker in local_workers:
+                returncode = local_worker["process"].wait()
+                local_worker["metadata"]["returncode"] = returncode
+                print(
+                    f"[INFO] Local worker {local_worker['metadata']['worker_idx']} "
+                    f"exited with return code {returncode}"
+                )
+        except KeyboardInterrupt:
+            print("[INFO] Interrupt received; terminating local workers.")
+            for local_worker in local_workers:
+                if local_worker["process"].poll() is None:
+                    local_worker["process"].terminate()
+            for local_worker in local_workers:
+                local_worker["process"].wait()
+            raise
+        finally:
+            for local_worker in local_workers:
+                local_worker["out_handle"].close()
+                local_worker["err_handle"].close()
+            pd.DataFrame(workers_metadata).to_csv(workers_metadata_csv_path, index=False)
+
+        failed_workers = [
+            metadata for metadata in workers_metadata
+            if metadata["returncode"] != 0
+        ]
+        if failed_workers:
+            failed_indices = ", ".join(
+                str(metadata["worker_idx"]) for metadata in failed_workers
+            )
+            raise RuntimeError(
+                f"Local workers failed: {failed_indices}. "
+                f"See logs listed in {workers_metadata_csv_path}."
+            )
+
+        print("[INFO] All local workers completed successfully.")
 
 def check_on_jobs(args):
     if not hasattr(args, "jobs_path") or args.jobs_path is None:
@@ -734,7 +825,7 @@ def main():
     parser.add_argument('--jobs_path', type=str, help="Path to the directory of the jobs.")
     parser.add_argument('--sequence_colname', type=str, default="full_sequence", help="Column name in the CSV file containing the sequences.")
     parser.add_argument('--label_column_name', type=str, default=None, help="Column name in the CSV file containing the labels.")
-    parser.add_argument('--job_executing_type', type=str, default='local', choices=['lsf', 'local'], help="Type of job execution: 'lsf' (submit jobs via LSF cluster) or 'local' (run as local threads).")
+    parser.add_argument('--job_executing_type', type=str, default='local', choices=['lsf', 'local'], help="Type of job execution: 'lsf' (submit jobs via LSF cluster) or 'local' (run as local subprocesses and wait for them).")
     parser.add_argument('--specific_job_i', type=int, help="Index of the job to run.")
     parser.add_argument('--specific_job_path', type=str, help="Path to the job file to run.")
     parser.add_argument('--action', type=str, required=True, choices=['embed_sequences', 'embed_dataset', 'embed_parallel', 'embed_view_job_file', 'list_jobs', 'worker', 'execute_workers', 'check_on_jobs', 'specific_job'])

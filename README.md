@@ -1,4 +1,13 @@
-# Protein fitness simple baselines
+```text
+╭───────╮ ╭─────╮ ╭─╮     ╭─╮ ╭───────╮ ╭─╮       ╭───────╮                 ╭───────╮ ╭───────╮ ╭───────╮ ╭───────╮ ╭─╮       ╭─────╮ ╭─╮     ╭─╮ ╭───────╮ ╭───────╮
+│ ╭─────╯ ╰─╮ ╭─╯ │ ╰─╮ ╭─╯ │ │ ╭───╮ │ │ │       │ ╭─────╯                 │ ╭───╮ │ │ ╭───╮ │ │ ╭─────╯ │ ╭─────╯ │ │       ╰─╮ ╭─╯ │ ╰───╮ │ │ │ ╭─────╯ │ ╭─────╯
+│ ╰─────╮   │ │   │   ╰─╯   │ │ ╰───╯ │ │ │       │ ╰───╮                   │ ╰───╯ │ │ ╰───╯ │ │ ╰─────╮ │ ╰───╮   │ │         │ │   │ ╭─╮ ╰─╯ │ │ ╰───╮   │ ╰─────╮
+╰─────╮ │   │ │   │ ╭─────╮ │ │ ╭─────╯ │ │       │ ╭───╯                   │ ╭───╮ │ │ ╭───╮ │ ╰─────╮ │ │ ╭───╯   │ │         │ │   │ │ ╰─╮   │ │ ╭───╯   ╰─────╮ │
+╭─────╯ │ ╭─╯ ╰─╮ │ │     │ │ │ │       │ ╰─────╮ │ ╰─────╮                 │ ╰───╯ │ │ │   │ │ ╭─────╯ │ │ ╰─────╮ │ ╰─────╮ ╭─╯ ╰─╮ │ │   ╰─╮ │ │ ╰─────╮ ╭─────╯ │
+╰───────╯ ╰─────╯ ╰─╯     ╰─╯ ╰─╯       ╰───────╯ ╰───────╯                 ╰───────╯ ╰─╯   ╰─╯ ╰───────╯ ╰───────╯ ╰───────╯ ╰─────╯ ╰─╯     ╰─╯ ╰───────╯ ╰───────╯
+```
+
+# Protein Fitness · Simple Baselines
 
 This repository is the portable, minimal-change extraction of the protein-fitness workflows from `fitness_learning`. It contains the original baseline and embedding scripts, the seven `lean_*` notebooks, local PLM implementations/checkpoints, and the prepared analysis data available in the source workspace.
 
@@ -88,6 +97,197 @@ python code/create_hamming_mds.py \
   --N 100 \
   --output_path data/his2/mds/hamming_100.npy
 ```
+
+### CASP SaProt embeddings with LSF or local workers
+
+The following example embeds the 25 AAV positions in the CASP dataset with
+SaProt. Run it from the repository root. It creates 500-sequence chunks and
+immediately submits five GPU workers through LSF:
+
+```bash
+conda run -n esm_env python code/embedding_engine.py \
+  --action embed_parallel \
+  --dataset_file data/casp/casp.csv \
+  --sequence_colname full_seq \
+  --label_column_name activity \
+  --model saprot \
+  --saprot_pdb_sequence_file data/casp/casp_pdb_sequence.txt \
+  --saprot_token_sequence_file data/casp/casp_foldseek_3di.txt \
+  --positions_to_embed 561 562 563 565 566 567 568 571 572 573 574 575 576 577 578 579 580 581 582 583 584 585 586 587 588 \
+  --evaluation_path results/casp/saprot_aav_sites \
+  --chunk_size 500 \
+  --internal_batch_size 2 \
+  --execute_after_parallel_generation \
+  --job_executing_type lsf \
+  --n_workers 5
+```
+
+The positions are one-based protein positions; the embedding tensor therefore
+has 25 positions per sequence. Save the timestamped path printed after
+`[INFO] JOBS PATH:` for the monitoring commands below. For example:
+
+```bash
+JOBS_PATH=results/casp/saprot_aav_sites/jobs_YYYYMMDD_HHMMSS_parallel
+```
+
+To execute locally instead of submitting to LSF, use
+`--job_executing_type local`. With `--execute_after_parallel_generation`, the
+command starts `--n_workers` local subprocesses and waits for all of them to
+finish. Each worker loads its own model, so use one worker unless the machine
+has enough CPU/GPU memory for several copies. An already-generated queue can
+also be started locally with:
+
+```bash
+conda run -n esm_env python code/embedding_engine.py \
+  --action execute_workers \
+  --jobs_path "$JOBS_PATH" \
+  --job_executing_type local \
+  --n_workers 1
+```
+
+Local stdout, stderr, process IDs, commands, and final return codes are stored
+under `$JOBS_PATH/job_execution_*/` in the same metadata layout used for LSF.
+
+Check LSF itself to see whether workers are pending, running, or finished:
+
+```bash
+bjobs
+bjobs -a
+bjobs -l JOB_ID
+```
+
+Check chunk-level progress independently of LSF:
+
+```bash
+conda run -n esm_env python code/embedding_engine.py \
+  --action check_on_jobs \
+  --jobs_path "$JOBS_PATH"
+```
+
+A chunk's `.job` marker is deleted only after its output is saved, so it is
+safe to collect when this reports `Jobs left: 0` and does not warn about
+missing `train/indices.pt` files. Worker stdout/stderr paths are recorded in
+`$JOBS_PATH/job_execution_*/workers_metadata.csv`; inspect the latest output
+with:
+
+```bash
+tail -n 50 "$JOBS_PATH"/job_execution_*/job_outputs/out_file_worker_*
+tail -n 50 "$JOBS_PATH"/job_execution_*/job_outputs/err_file_worker_*
+```
+
+Once all chunks are complete, collect them into tensors split by mutation
+count. CASP contains variants with 0 through 18 mutations:
+
+```bash
+conda run -n esm_env python code/collect_protgym_embeddings.py \
+  --input_csv data/casp/casp.csv \
+  --dataset_name casp \
+  --model_name saprot_aav_sites \
+  --hidden_dim_size 1280 \
+  --mutations_to_select 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 \
+  --evaluation_dir results/casp/saprot_aav_sites/evaluations \
+  --output_dir data/casp/embeddings/saprot_aav_sites
+```
+
+This writes `embeddings_of_nmut_*.pt`, `y_values_of_nmut_*.pt`, and
+`indices_of_nmut_*.pt`. To also create one index-ordered tensor for the whole
+dataset, merge and validate those files against the source CSV:
+
+```bash
+conda run -n esm_env python code/merge_embedding_chunks.py \
+  --dataset_csv data/casp/casp.csv \
+  --y_col activity \
+  --embedding_dirs data/casp/embeddings/saprot_aav_sites \
+  --max_nmut 18
+```
+
+`--embedding_dirs` must point directly to a leaf directory containing the
+`embeddings_of_nmut_*.pt` files; the command does not search subdirectories.
+For example, merge the separate `saprot/` chunks for mutation counts 0 through
+10 with:
+
+```bash
+python code/merge_embedding_chunks.py \
+  --dataset_csv data/casp/casp.csv \
+  --y_col activity \
+  --embedding_dirs data/casp/embeddings/saprot \
+  --max_nmut 10
+```
+
+Do not pass the parent directory `data/casp/embeddings/`. Also avoid running
+the `saprot_aav_sites/` merge with a lower `--max_nmut` after completing the
+18-mutation merge, because the partial tensors would replace the complete
+merged outputs in that directory.
+
+The merged files are `embeddings.pt`, `y_values.pt`, and `indices.pt` in
+`data/casp/embeddings/saprot_aav_sites/`. For the current CASP data, the
+final embedding shape is expected to be `(18465, 25, 1280)`.
+
+Run the matched SaProt-versus-one-hot regression benchmark with mean-pooled
+embeddings:
+
+```bash
+conda run -n esm_env python code/train_regressors_over_embeddings_subsamples.py \
+  --dataset_name casp \
+  --dataset_path data/casp/casp.csv \
+  --external_labels_column activity \
+  --model_names saprot_aav_sites \
+  --model_output_names saprot \
+  --mean_embeddings \
+  --n_samples 100 200 500 1000 5000 \
+  --iters 10 \
+  --output_root data/casp/subsamples
+```
+
+`--mean_embeddings` reduces each 25-by-1280 tensor to 1280 features. Without
+it, the script flattens each tensor to 32,000 features. The matched run writes
+the one-hot metrics under `data/casp/subsamples/one_hot/` and the SaProt metrics
+under `data/casp/subsamples/saprot/`. Architecture settings are encoded in the
+CSV filenames. Override them with `--ohe_hl`, `--llm_hl`, `--ohe_solver`,
+`--llm_solver`, `--ohe_alpha`, `--llm_alpha`, `--ohe_max_iter`, and
+`--llm_max_iter`.
+
+Run controlled extrapolation with the default MLP regressor, training a
+separate cumulative model through mutation orders 1, 2, 3, 4, and 5 and
+testing each model on every available higher mutation order:
+
+```bash
+conda run -n esm_env python code/train_classifiers_over_embeddings.py \
+  --model_name saprot_aav_sites \
+  --dataset_name casp \
+  --mean_embeddings \
+  --regression \
+  --external_labels_column activity \
+  --n_start 1 \
+  --n_end 6 \
+  --niters 200 \
+  --output_dir data/casp/controlled_extrapolation/saprot
+```
+
+`--n_end` is exclusive. CASP mutation-order files are discovered automatically,
+so evaluation continues through order 18. Results are written under
+`data/casp/controlled_extrapolation/saprot/`. The script's general default is
+`data/<dataset>/controlled_extrapolation/<model>/`; the explicit `--output_dir`
+above gives this SaProt run its shorter output name.
+
+Run the matching controlled-extrapolation experiment with one-hot features:
+
+```bash
+conda run -n esm_env python code/train_classifiers_over_ohe.py \
+  --dataset_name casp \
+  --regression \
+  --external_labels_column activity \
+  --n_start 1 \
+  --n_end 6 \
+  --niters 200
+```
+
+This writes architecture-specific CSVs under
+`data/casp/controlled_extrapolation/one_hot/` and evaluates every available
+mutation order above the training threshold, through CASP order 18. Override
+the MLP architecture with `--hl 100,50`, and tune it with `--alpha`, `--op`,
+`--lr`, and `--niters`. Use `--output_dir` only when a different destination is
+needed.
 
 Generate NMT model-selection jobs using repository-relative paths:
 
