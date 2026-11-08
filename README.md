@@ -306,6 +306,71 @@ python code/generate_jobs_for_extensive_model_selection.py \
   --niters 10 --load_all
 ```
 
+The generator only writes job scripts; it does not run them. When the command
+uses repository-relative paths, run every generated script from the repository
+root. Do not change into `preflight/`, `resolve_architectures/`, or
+`score_after_resolving/`, because paths such as `data/nmt/nmt.csv` are resolved
+from the current working directory. Run the three phases in order:
+
+```bash
+cd /path/to/simple_baselines
+JOB_DIR=data/nmt/scoring_jobs
+
+# 1. Create the shared train/validation/test splits.
+bash "$JOB_DIR/preflight/00_make_splits.sh"
+
+# 2. Resolve every required architecture. These may instead be submitted to a scheduler.
+for job in "$JOB_DIR"/resolve_architectures/*.sh; do
+  bash "$job"
+done
+
+# 3. Score only after all required architecture jobs have completed.
+for job in "$JOB_DIR"/score_after_resolving/*.sh; do
+  bash "$job"
+done
+```
+
+For example, a CASP/SaProt preflight generated under
+`data/casp/scoring_jobs/saprot` should be launched from the repository root as
+`bash data/casp/scoring_jobs/saprot/preflight/00_make_splits.sh`. The message
+`--train_sizes not provided; random train_type scripts were skipped` is
+informational: mutation-based jobs were generated, but random-subsampling jobs
+were not. Add `--train_sizes ...` to the generator command only when those
+random jobs are wanted. Absolute `--sequence_path` and `--cache_path` values
+can be used when generated scripts need to run from arbitrary directories.
+
+Each scoring script requires the matching architecture-resolution script to
+finish successfully first. Preflight creates only the data splits; it does not
+create `best_architecture.json`. For example, CASP/SaProt full-resolution
+scoring for training order 1 has this dependency:
+
+```bash
+# Creates scoring_cache/regressor/architectures/mean_saprot/full/best_architecture.json
+bash data/casp/scoring_jobs/saprot/resolve_architectures/0001_mean_saprot_full.sh
+
+# Run only after the architecture command succeeds.
+bash data/casp/scoring_jobs/saprot/score_after_resolving/0001_mean_saprot_mutation_full_train_K_1.sh
+```
+
+There is an additional limitation for the currently bundled CASP/SaProt data:
+`data/casp/casp.csv` contains mutation orders through 18, while
+`data/casp/embeddings/saprot` contains embedding chunks only for orders 0–10.
+The scorer's `full` architecture split uses every CSV row, so the full
+architecture command above will try to load missing chunks beginning with
+`embeddings_of_nmut_11.pt`. Full mode therefore requires either generating the
+SaProt chunks for orders 11–18 or changing full split creation to respect the
+requested maximum mutation order. The bounded `less_than_K` and `equal_to_K`
+workflows can use the existing chunks. For example:
+
+```bash
+bash data/casp/scoring_jobs/saprot/resolve_architectures/0002_mean_saprot_less_than_K_K_1.sh
+bash data/casp/scoring_jobs/saprot/score_after_resolving/0006_mean_saprot_mutation_less_than_K_train_K_1.sh
+```
+
+Do not remove `--require_resolved_architecture` from a scoring script as a
+workaround: that only moves architecture resolution into the scoring process
+and does not fix missing embedding chunks.
+
 Launch the notebooks:
 
 ```bash
