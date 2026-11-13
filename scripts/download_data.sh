@@ -3,43 +3,46 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-merged_datasets_url="${MERGED_DATASETS_URL:-https://drive.google.com/file/d/18KK9ig260Hzwl1rVgqRnjOyiCbopD2qw/view?usp=drive_link}"
-datasets_for_analysis_url="${DATASETS_FOR_ANALYSIS_URL:-https://drive.google.com/file/d/16s7qcJCjR4TsbVn-ShWe3ycdxXo84aEC/view?usp=drive_link}"
-embeddings_url="${EMBEDDINGS_URL:-}"
-download_embeddings=0
+# The release is split into two archives. Keep the old environment variable
+# names as fallbacks so existing setup commands continue to work.
+data_url="${DATA_URL:-${DATASETS_FOR_ANALYSIS_URL:-https://drive.google.com/file/d/16s7qcJCjR4TsbVn-ShWe3ycdxXo84aEC/view?usp=drive_link}}"
+merged_embeddings_url="${MERGED_DATASETS_AND_EMBEDDINGS_URL:-${MERGED_DATASETS_URL:-https://drive.google.com/file/d/18KK9ig260Hzwl1rVgqRnjOyiCbopD2qw/view?usp=drive_link}}"
 download_dir="${DOWNLOAD_DIR:-}"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/download_data.sh [options]
 
-Downloads and installs the analysis datasets and merged datasets. The
-embedding archive is optional until its Google Drive link is available.
+Downloads and installs the two prepared-data archives:
+  1. data_final.zip: datasets are installed under data/
+  2. merged_datasets_and_embeddings.zip: merged_datasets/ is installed at the
+     repository root, and each dataset's embeddings are installed under
+     data/<dataset>/embeddings/
 
 Options:
-  --embeddings-url URL  Also download and install embeddings.zip
-  --embeddings-only     Skip the two dataset archives (requires an embedding URL)
-  --download-dir DIR    Keep downloaded archives in DIR instead of a temporary directory
-  -h, --help            Show this help
+  --data-url URL               Override the data archive URL
+  --merged-embeddings-url URL  Override the merged-datasets/embeddings URL
+  --download-dir DIR           Keep downloaded archives in DIR instead of a
+                               temporary directory
+  -h, --help                   Show this help
 
-The embedding URL can also be supplied through EMBEDDINGS_URL. DOWNLOAD_DIR
-is useful for retaining large archives or resuming an interrupted setup.
+URLs can also be overridden with DATA_URL and
+MERGED_DATASETS_AND_EMBEDDINGS_URL. DOWNLOAD_DIR is useful for retaining the
+large archives for reuse.
 EOF
 }
 
-download_datasets=1
 while (($#)); do
   case "$1" in
-    --embeddings-url)
-      [[ $# -ge 2 ]] || { echo "--embeddings-url requires a value" >&2; exit 2; }
-      embeddings_url="$2"
-      download_embeddings=1
+    --data-url)
+      [[ $# -ge 2 ]] || { echo "--data-url requires a value" >&2; exit 2; }
+      data_url="$2"
       shift 2
       ;;
-    --embeddings-only)
-      download_datasets=0
-      download_embeddings=1
-      shift
+    --merged-embeddings-url)
+      [[ $# -ge 2 ]] || { echo "--merged-embeddings-url requires a value" >&2; exit 2; }
+      merged_embeddings_url="$2"
+      shift 2
       ;;
     --download-dir)
       [[ $# -ge 2 ]] || { echo "--download-dir requires a value" >&2; exit 2; }
@@ -58,14 +61,6 @@ while (($#)); do
   esac
 done
 
-if [[ -n "$embeddings_url" ]]; then
-  download_embeddings=1
-fi
-if ((download_embeddings == 1)) && [[ -z "$embeddings_url" ]]; then
-  echo "An embedding link is required; pass --embeddings-url or set EMBEDDINGS_URL." >&2
-  exit 2
-fi
-
 for command_name in curl unzip; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command not found: $command_name" >&2
@@ -82,7 +77,9 @@ else
   download_dir="$(cd "$download_dir" && pwd)"
 fi
 
-extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/simple-baselines-extract.XXXXXX")"
+# Stage extraction on the repository filesystem. Fresh installations can then
+# move large directories into place instead of making a second multi-GB copy.
+extract_dir="$(mktemp -d "$repo_root/.simple-baselines-extract.XXXXXX")"
 cleanup() {
   rm -rf -- "$extract_dir"
   if ((temporary_download_dir == 1)); then
@@ -117,7 +114,6 @@ validate_zip() {
   fi
 
   if unzip -Z1 "$archive" | awk '
-    BEGIN { unsafe = 0 }
     /^\// || /(^|\/)\.\.($|\/)/ { unsafe = 1 }
     END { exit unsafe ? 0 : 1 }
   '; then
@@ -149,32 +145,34 @@ download_archive() {
 
 reset_extract_dir() {
   rm -rf -- "$extract_dir"
-  extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/simple-baselines-extract.XXXXXX")"
+  extract_dir="$(mktemp -d "$repo_root/.simple-baselines-extract.XXXXXX")"
 }
 
-install_datasets_for_analysis() {
-  local archive="$1"
-  reset_extract_dir
-  unzip -q "$archive" -d "$extract_dir"
-  if [[ ! -d "$extract_dir/data" ]]; then
-    echo "Expected a data/ directory in $archive" >&2
+install_directory() {
+  local source_dir="$1"
+  local destination_dir="$2"
+
+  mkdir -p "$(dirname "$destination_dir")"
+  if [[ ! -e "$destination_dir" && ! -L "$destination_dir" ]]; then
+    mv -- "$source_dir" "$destination_dir"
+  elif [[ -d "$destination_dir" ]]; then
+    cp -a "$source_dir/." "$destination_dir/"
+  else
+    echo "Installation destination is not a directory: $destination_dir" >&2
     exit 1
   fi
-  mkdir -p "$repo_root/data"
-  cp -a "$extract_dir/data/." "$repo_root/data/"
-  echo "Installed datasets for analysis in $repo_root/data"
 }
 
-install_merged_datasets() {
+install_data() {
   local archive="$1"
   local source_dir=""
+
   reset_extract_dir
   unzip -q "$archive" -d "$extract_dir"
 
-  for candidate in \
-    "$extract_dir/data/merged_datasets" \
-    "$extract_dir/notebooks/data/merged_datasets" \
-    "$extract_dir/merged_datasets"; do
+  # data_final/ is the release layout; data/ is accepted for compatibility
+  # with locally repacked archives.
+  for candidate in "$extract_dir/data_final" "$extract_dir/data"; do
     if [[ -d "$candidate" ]]; then
       source_dir="$candidate"
       break
@@ -182,63 +180,75 @@ install_merged_datasets() {
   done
 
   if [[ -z "$source_dir" ]]; then
-    echo "Could not find merged_datasets/ in $archive" >&2
+    echo "Expected a data_final/ directory in $archive" >&2
     exit 1
   fi
 
-  mkdir -p "$repo_root/data/merged_datasets"
-  cp -a "$source_dir/." "$repo_root/data/merged_datasets/"
-  echo "Installed merged datasets in $repo_root/data/merged_datasets"
-
-  local notebook_data_path="$repo_root/merged_datasets"
-  if [[ -e "$notebook_data_path" || -L "$notebook_data_path" ]]; then
-    echo "Notebook data path already exists; left unchanged: $notebook_data_path"
-  else
-    ln -s data/merged_datasets "$notebook_data_path"
-    echo "Linked notebook data path: $notebook_data_path"
-  fi
+  install_directory "$source_dir" "$repo_root/data"
+  echo "Installed datasets in $repo_root/data"
 }
 
-install_embeddings() {
+install_merged_datasets_and_embeddings() {
   local archive="$1"
-  local required_path
-  local required_paths=(
-    data/pard3/embeddings/esm_35m
-    data/pard3/embeddings/esm_150m
-    data/pard3/embeddings/esm_650m
-    data/casp/embeddings/saprot
-    data/casp/embeddings/saprot_aav_sites
-    data/his2/embeddings/prot_bert
-    data/his2/embeddings/progen2-small
-  )
+  local merged_source
+  local embeddings_source
+  local dataset_source
+  local dataset_name
+  local installed_embeddings=0
 
   reset_extract_dir
   unzip -q "$archive" -d "$extract_dir"
-  for required_path in "${required_paths[@]}"; do
-    if [[ ! -d "$extract_dir/$required_path" ]]; then
-      echo "Expected $required_path in $archive" >&2
+  merged_source="$extract_dir/merged_datasets"
+  embeddings_source="$extract_dir/embeddings"
+
+  if [[ ! -d "$merged_source" ]]; then
+    echo "Expected a merged_datasets/ directory in $archive" >&2
+    exit 1
+  fi
+  if [[ ! -d "$embeddings_source" ]]; then
+    echo "Expected an embeddings/ directory in $archive" >&2
+    exit 1
+  fi
+
+  install_directory "$merged_source" "$repo_root/merged_datasets"
+  echo "Installed merged datasets in $repo_root/merged_datasets"
+
+  while IFS= read -r -d '' dataset_source; do
+    dataset_name="$(basename "$dataset_source")"
+    if [[ ! -d "$dataset_source/embeddings" ]]; then
+      echo "Expected embeddings/$dataset_name/embeddings/ in $archive" >&2
       exit 1
     fi
-  done
 
-  mkdir -p "$repo_root/data"
-  cp -a "$extract_dir/data/." "$repo_root/data/"
-  echo "Installed PARD3, CASP, and HIS2 embeddings in $repo_root/data"
+    install_directory \
+      "$dataset_source/embeddings" \
+      "$repo_root/data/$dataset_name/embeddings"
+    echo "Installed $dataset_name embeddings in $repo_root/data/$dataset_name/embeddings"
+    installed_embeddings=$((installed_embeddings + 1))
+  done < <(find "$embeddings_source" -mindepth 1 -maxdepth 1 -type d -print0)
+
+  if ((installed_embeddings == 0)); then
+    echo "No dataset embedding directories found in $archive" >&2
+    exit 1
+  fi
+
+  # Some analysis code still refers to data/merged_datasets. A relative link
+  # keeps that path working without storing a second copy of the large tables.
+  local legacy_merged_path="$repo_root/data/merged_datasets"
+  if [[ ! -e "$legacy_merged_path" && ! -L "$legacy_merged_path" ]]; then
+    ln -s ../merged_datasets "$legacy_merged_path"
+    echo "Linked compatibility path: $legacy_merged_path"
+  elif [[ -L "$legacy_merged_path" && "$(readlink "$legacy_merged_path")" == "../merged_datasets" ]]; then
+    :
+  else
+    echo "Compatibility path already exists; left unchanged: $legacy_merged_path"
+  fi
 }
 
-if ((download_datasets == 1)); then
-  datasets_archive="$(download_archive "$datasets_for_analysis_url" datasets_for_analysis.zip)"
-  install_datasets_for_analysis "$datasets_archive"
+data_archive="$(download_archive "$data_url" data_final.zip)"
+install_data "$data_archive"
 
-  merged_archive="$(download_archive "$merged_datasets_url" merged_datasets.zip)"
-  install_merged_datasets "$merged_archive"
-fi
-
-if ((download_embeddings == 1)); then
-  embeddings_archive="$(download_archive "$embeddings_url" embeddings.zip)"
-  install_embeddings "$embeddings_archive"
-else
-  echo "Embedding archive skipped; pass --embeddings-url after uploading embeddings.zip."
-fi
+merged_embeddings_archive="$(download_archive "$merged_embeddings_url" merged_datasets_and_embeddings.zip)"
+install_merged_datasets_and_embeddings "$merged_embeddings_archive"
 
 echo "Data setup complete."

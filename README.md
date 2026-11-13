@@ -31,7 +31,7 @@ From the repository root, run:
 bash scripts/download_data.sh
 ```
 
-This downloads the public dataset and merged-analysis archives. Raw datasets are installed under `data/`; prepared tables are installed under `data/merged_datasets/` and exposed as `merged_datasets/` for the notebooks. Use `--download-dir .downloads` to retain the archives for reuse.
+This downloads two public archives: one containing the datasets and one containing the merged analysis tables plus prepared embeddings. Datasets are installed under `data/`, merged tables under the root-level `merged_datasets/`, and embeddings under each dataset's `data/<dataset>/embeddings/` directory. A `data/merged_datasets` compatibility link is also created when that path is available. Use `--download-dir .downloads` to retain the large archives for reuse.
 
 Verify the installation and data payload with:
 
@@ -39,7 +39,7 @@ Verify the installation and data payload with:
 python scripts/verify_install.py --strict-data
 ```
 
-Prepared embeddings are not needed to recreate the notebook analyses. They are only required when rerunning embedding-based baselines; see [Rerun analyses from earlier stages](#rerun-analyses-from-earlier-stages).
+Prepared embeddings are included for rerunning embedding-based baselines; they are not needed to recreate the notebook analyses.
 
 ### 3. Run the lean notebooks
 
@@ -103,12 +103,7 @@ The positions are one-based protein positions. For an LSF cluster, change `--job
 
 The command produces chunked outputs. Follow the collection and merging examples in [EXAMPLE_RUNS.md](docs/EXAMPLE_RUNS.md#embedding-collection-and-feature-preparation) to create tensors suitable for training. Model-specific roles and inputs are summarized in [CODE_REFERENCE.md](docs/CODE_REFERENCE.md#core-embedding-and-model-modules).
 
-If a prepared embedding archive is available, install it without recomputing embeddings:
-
-```bash
-bash scripts/download_data.sh --embeddings-only \
-  --embeddings-url 'https://drive.google.com/file/d/FILE_ID/view'
-```
+The prepared embedding archive is installed by `scripts/download_data.sh`, so these tensors do not need to be recomputed unless you want to regenerate them.
 
 ### Rerun baseline and fitness experiments
 
