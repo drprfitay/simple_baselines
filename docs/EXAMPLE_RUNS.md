@@ -275,7 +275,8 @@ python code/train_classifiers_over_ohe.py \
 
 The accepted option is `--dataset_name`, not `--dataset`. As above, `n_end` is exclusive in the current implementation.
 
-For CASP, use the default MLP regressor and save architecture-specific files
+For CASP, use the default MLP regressor and save files named
+`one_hot_evaluation_train_on_<n>_mlp.csv`
 under `data/casp/controlled_extrapolation/one_hot/`:
 
 ```bash
@@ -291,7 +292,7 @@ conda run -n esm_env python code/train_classifiers_over_ohe.py \
 Available mutation orders are read from the dataset, so CASP is evaluated
 through order 18. Use `--hl 100,50`, `--alpha`, `--op`, `--lr`, and `--niters`
 to override the MLP architecture and optimizer. The architecture is included
-in each output filename.
+in each output CSV's `grid_*` columns rather than its filename.
 
 ### `train_regressors_over_embeddings_subsamples.py`
 
@@ -542,7 +543,12 @@ The main controls are:
 - `USE_SAPROT`: whether to include SaProt;
 - batch sizes and mixed-precision settings for the available GPU.
 
-Use `--datasets` and `--models` to expand the run. Each dataset needs cached token tensors under `data/<dataset>/<dataset>_cache/misc/`. Results are currently written under `notebooks/<dataset>/fitness_results/`. This replaces the generic historical command `python calculate_fitness_for_plm.py`, because that filename is not present in this repository.
+Use `--datasets` and `--models` to expand the run. Each dataset needs cached token tensors under `data/<dataset>/<dataset>_cache/misc/`. Results are written under `results/<dataset>/fitness_results/`. This replaces the generic historical command `python calculate_fitness_for_plm.py`, because that filename is not present in this repository.
+
+`one_mut` writes `new_om_normed_fitness_all.csv` and `mutation_mask` writes
+`pll_normed_fitness_all.csv`; both use the unsuffixed canonical model names.
+`left_to_right` writes `new_l2r_normed_fitness_all.csv` and scores only
+`progen2-medium_left_to_right` and `progen2-small_left_to_right`.
 
 ### `calculate_fitness_for_plm_original_additivity.py`
 
@@ -554,7 +560,7 @@ python code/calculate_fitness_for_plm_original_additivity.py \
   --models esm_8m
 ```
 
-It uses the same token caches and writes `fitness_all.csv` and `normed_fitness_all.csv` under each dataset's `notebooks/<dataset>/fitness_results/` directory. Pass additional values to `--datasets` or `--models` to expand the run.
+It uses the same token caches and writes `fitness_all.csv` and `normed_fitness_all.csv` under each dataset's `results/<dataset>/fitness_results/` directory. Pass additional values to `--datasets` or `--models` to expand the run.
 
 ### `detect_epistasis.py`
 

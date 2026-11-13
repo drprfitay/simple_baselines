@@ -63,14 +63,13 @@ def parse_hidden_layers(hl_list):
     return parsed
 
 
-def architecture_slug(linreg, hidden_layers, alpha, solver, learning_rate, niters):
-    if linreg:
-        return "linear_regression"
-    hidden = "-".join(str(value) for value in hidden_layers)
-    return (
-        f"mlp_hl-{hidden}_alpha-{alpha:g}_solver-{solver}_"
-        f"lr-{learning_rate:g}_iters-{niters}"
-    )
+def model_slug(linreg):
+    return "linear_regression" if linreg else "mlp"
+
+
+def output_filename(n_train, linreg):
+    return f"one_hot_evaluation_train_on_{n_train}_{model_slug(linreg)}.csv"
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -257,12 +256,7 @@ def main():
             )
 
         os.makedirs(save_dir, exist_ok=True)
-        architecture = architecture_slug(args.linreg, hidden_layers, alpha, solver, lr, niters)
-        task = 'regression' if is_regression else 'classification'
-        out_csv = os.path.join(
-            save_dir,
-            f"one_hot_{task}_train_on_{n_train_data}_{architecture}.csv",
-        )
+        out_csv = os.path.join(save_dir, output_filename(n_train_data, args.linreg))
         test_data_df.to_csv(out_csv, index=False)
         print(f"Saved evaluation: {out_csv}")
         print(test_data_df)

@@ -7,6 +7,8 @@ __pycache__/
 executions/
 rosetta/
 data/
+/merged_datasets
+/merged_datasets_ol
 results/
 notebooks/tmp_files/
 notebooks/results/
@@ -19,6 +21,11 @@ notebooks/refined_figures/
 build/
 dist/
 .ipynb_checkpoints/
+.downloads/
+data.zip
+datasets_for_analysis.zip
+merged_datasets.zip
+embeddings.zip
 
 # Notebook-generated figures
 figures/

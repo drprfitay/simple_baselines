@@ -178,7 +178,7 @@ DEFAULT_WORKING_DATASETS = [
     "lov",
     "pard3",
     "gcn4",
-    "nmt",
+    # "nmt",  # Not included in the public data download.
     "gfp",
     "pte",
     # "aamyl",
@@ -217,8 +217,12 @@ for dataset_to_use in working_datasets:
     df = pd.read_csv(working_path)
     working_positions = get_positions[dataset_to_use](df)
     working_positions = torch.tensor([int(p) for p in working_positions])
-    wt_idx = np.where(df[num_muts_column_name[dataset_to_use]] == 0)[0]
-    wt_seq = df[full_seq_column_name[dataset_to_use]].iloc[wt_idx].item()
+    wt_indices = np.where(df[num_muts_column_name[dataset_to_use]] == 0)[0]
+    assert len(wt_indices) == 1, (
+        "Expected exactly one WT sequence, found %d" % len(wt_indices)
+    )
+    wt_idx = int(wt_indices.item())
+    wt_seq = df[full_seq_column_name[dataset_to_use]].iloc[wt_idx]
     nmuts_vec = df[num_muts_column_name[dataset_to_use]].to_numpy()
     nmuts_vec[wt_idx] = 1
 
@@ -239,18 +243,19 @@ for dataset_to_use in working_datasets:
     os.makedirs(save_path, exist_ok=True)
 
     normed_fitness_path = "%s/normed_fitness_all.csv" % save_path
-    fitness_path = "%s/fitness_all.csv" % save_path
+    # Raw fitness output is intentionally disabled; only normalized fitness is saved.
+    # fitness_path = "%s/fitness_all.csv" % save_path
 
     normed_fitness_all, existing_normed_columns = load_existing_result_columns(
         normed_fitness_path,
         len(df),
         RESUME_MISSING_MODELS,
     )
-    fitness_all, existing_fitness_columns = load_existing_result_columns(
-        fitness_path,
-        len(df),
-        RESUME_MISSING_MODELS,
-    )
+    # fitness_all, existing_fitness_columns = load_existing_result_columns(
+    #     fitness_path,
+    #     len(df),
+    #     RESUME_MISSING_MODELS,
+    # )
 
     for k in tokenized_sequences_path_dict.keys():
         print("########################################################")
@@ -259,7 +264,6 @@ for dataset_to_use in working_datasets:
         if (
             RESUME_MISSING_MODELS
             and k in existing_normed_columns
-            and k in existing_fitness_columns
         ):
             print(
                 "[INFO] Skipping %s; result column already exists"
@@ -290,7 +294,7 @@ for dataset_to_use in working_datasets:
             dataset_to_use,
             wt_seq,
         ).eval()
-        wt_tokens = tokenized_sequence[wt_idx, :]
+        wt_tokens = tokenized_sequence[wt_idx:wt_idx + 1, :]
         vocab = model.vocab
 
 
@@ -360,7 +364,7 @@ for dataset_to_use in working_datasets:
         
         print(np.unique(nmuts_vec, return_counts=True))
         normed_fitness_all.append((k, fitness / nmuts_vec))
-        fitness_all.append((k, fitness))
+        # fitness_all.append((k, fitness))
 
         print((fitness / nmuts_vec) - fitness)
 
@@ -371,4 +375,4 @@ for dataset_to_use in working_datasets:
         # Set the column names of the pssm DataFrame to vocab
         #pd.DataFrame(pssm[working_positions].detach().numpy(), columns=vocab).to_csv("%s/pssm_%s.csv" % (save_path, k), index=False)
     pd.DataFrame(dict(normed_fitness_all)).to_csv(normed_fitness_path, index=False)
-    pd.DataFrame(dict(fitness_all)).to_csv(fitness_path, index=False)
+    # pd.DataFrame(dict(fitness_all)).to_csv(fitness_path, index=False)

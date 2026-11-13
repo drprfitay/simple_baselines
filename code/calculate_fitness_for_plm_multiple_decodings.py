@@ -32,7 +32,6 @@ VARIANT_SCORE_BATCH_SIZE = 2000
 USE_MIXED_PRECISION = True
 VERBOSE_SCORING = True
 RESUME_MISSING_MODELS = False
-RESULT_NAME_INCLUDES_SCORING_MODE = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("[INFO] Using device: %s" % str(device))
@@ -43,12 +42,12 @@ if device.type == "cuda":
 
 full_model_names = {
     "esm_8m": "esm2_t6_8M_UR50D",
-    # "esm_35m": "esm2_t12_35M_UR50D",
-    # "esm_150m": "esm2_t30_150M_UR50D",
-    # "esm_650m": "esm2_t33_650M_UR50D",
-    # "esm_3b": "esm2_t36_3B_UR50D",
-    # "progen2-medium": "progen2-medium",
-    # "progen2-small": "progen2-small"
+    "esm_35m": "esm2_t12_35M_UR50D",
+    "esm_150m": "esm2_t30_150M_UR50D",
+    "esm_650m": "esm2_t33_650M_UR50D",
+    "esm_3b": "esm2_t36_3B_UR50D",
+    "progen2-medium": "progen2-medium",
+    "progen2-small": "progen2-small"
 }
 USE_SAPROT = True
 
@@ -84,6 +83,31 @@ mask_tokens = {
 }
 
 tokenized_sequences_path_dict = {k: "%s_encoded_sequences.pt" % full_model_names[k] for k in full_model_names.keys()}
+
+CANONICAL_RESULT_MODEL_ORDER = (
+    "esm_8m",
+    "esm_35m",
+    "esm_150m",
+    "esm_650m",
+    "esm_3b",
+    "progen2-medium",
+    "progen2-small",
+    "saprot",
+)
+LEFT_TO_RIGHT_RESULT_MODEL_ORDER = (
+    "progen2-medium",
+    "progen2-small",
+)
+SCORING_MODE_OUTPUT_FILENAMES = {
+    "one_mut": "new_om_normed_fitness_all.csv",
+    "mutation_mask": "pll_normed_fitness_all.csv",
+    "left_to_right": "new_l2r_normed_fitness_all.csv",
+}
+LEGACY_RESULT_SUFFIXES = {
+    "one_mut": ("one_mut", "single_mut"),
+    "mutation_mask": ("mutation_mask", "pll"),
+    "left_to_right": ("left_to_right",),
+}
 
 
 def esmdecode(seq, tokenizer_dict):
@@ -149,7 +173,32 @@ def get_mask_token_id(model, model_key, mask_token_string):
     return model.encode(mask_token_string)[1]
 
 
-def load_existing_result_columns(path, expected_rows, resume_missing_models):
+def get_models_for_scoring_mode(scoring_mode):
+    if scoring_mode not in SCORING_MODE_OUTPUT_FILENAMES:
+        raise ValueError("Unknown scoring mode: %s" % scoring_mode)
+    if scoring_mode == "left_to_right":
+        return LEFT_TO_RIGHT_RESULT_MODEL_ORDER
+    return CANONICAL_RESULT_MODEL_ORDER
+
+
+def get_result_name(model_key, scoring_mode):
+    if model_key not in get_models_for_scoring_mode(scoring_mode):
+        raise ValueError("Model %s is not saved for scoring mode %s" % (model_key, scoring_mode))
+    if scoring_mode == "left_to_right":
+        return "%s_left_to_right" % model_key
+    return model_key
+
+
+def get_legacy_result_names(model_key, scoring_mode):
+    canonical_name = get_result_name(model_key, scoring_mode)
+    return [
+        "%s_%s" % (model_key, suffix)
+        for suffix in LEGACY_RESULT_SUFFIXES[scoring_mode]
+        if "%s_%s" % (model_key, suffix) != canonical_name
+    ]
+
+
+def load_existing_result_columns(path, expected_rows, resume_missing_models, scoring_mode):
     if not resume_missing_models or not os.path.exists(path):
         return [], set()
 
@@ -160,18 +209,28 @@ def load_existing_result_columns(path, expected_rows, resume_missing_models):
             "Existing result file %s has %d rows, expected %d" % (path, len(df), expected_rows)
         )
 
-    print("[INFO] Resuming from %s with existing columns: %s" % (path, ", ".join(df.columns)))
-    return [(col, df[col].to_numpy()) for col in df.columns], set(df.columns)
+    normalized_columns = []
+    used_source_columns = set()
+    for model_key in get_models_for_scoring_mode(scoring_mode):
+        result_name = get_result_name(model_key, scoring_mode)
+        candidate_names = [result_name] + get_legacy_result_names(model_key, scoring_mode)
+        source_name = next((name for name in candidate_names if name in df.columns), None)
+        if source_name is None:
+            continue
+        normalized_columns.append((result_name, df[source_name].to_numpy()))
+        used_source_columns.add(source_name)
+        if source_name != result_name:
+            print("[INFO] Renaming legacy result column %s to %s" % (source_name, result_name))
 
+    dropped_columns = [col for col in df.columns if col not in used_source_columns]
+    if dropped_columns:
+        print("[INFO] Dropping non-canonical columns from %s: %s" %
+              (path, ", ".join(dropped_columns)))
 
-def get_result_name(model_key, scoring_mode):
-    if RESULT_NAME_INCLUDES_SCORING_MODE:
-        return "%s_%s" % (model_key, scoring_mode)
-
-    if len(SCORING_MODES) != 1:
-        raise ValueError("RESULT_NAME_INCLUDES_SCORING_MODE=False requires exactly one scoring mode")
-
-    return model_key
+    normalized_names = set(name for name, _values in normalized_columns)
+    print("[INFO] Resuming from %s with canonical columns: %s" %
+          (path, ", ".join(name for name, _values in normalized_columns)))
+    return normalized_columns, normalized_names
 
 
 def _get_model_device(model):
@@ -429,7 +488,7 @@ DEFAULT_WORKING_DATASETS = [
     # "his",
     "his2",
     "his5",
-    "casp"
+    "casp_11"
 ]
 
 
@@ -502,20 +561,40 @@ for dataset_to_use in working_datasets:
     N_random_sequences_to_assert = 20
     save_path = "./results/%s/fitness_results/" % dataset_to_use
     os.makedirs(save_path, exist_ok=True)
-    normed_fitness_path = "%s/new_om_normed_fitness_all.csv" % save_path
-    fitness_path = "%s/new_om_fitness_all.csv" % save_path
-    normed_fitness_all, existing_normed_columns = load_existing_result_columns(
-        normed_fitness_path, len(df), RESUME_MISSING_MODELS)
-    fitness_all, existing_fitness_columns = load_existing_result_columns(
-        fitness_path, len(df), RESUME_MISSING_MODELS)
+    normed_fitness_paths = {
+        scoring_mode: os.path.join(save_path, SCORING_MODE_OUTPUT_FILENAMES[scoring_mode])
+        for scoring_mode in SCORING_MODES
+    }
+    normed_fitness_by_mode = {}
+    existing_normed_columns_by_mode = {}
+    for scoring_mode in SCORING_MODES:
+        result_columns, existing_columns = load_existing_result_columns(
+            normed_fitness_paths[scoring_mode],
+            len(df),
+            RESUME_MISSING_MODELS,
+            scoring_mode,
+        )
+        normed_fitness_by_mode[scoring_mode] = result_columns
+        existing_normed_columns_by_mode[scoring_mode] = existing_columns
 
     for k in tokenized_sequences_path_dict.keys():
         print("########################################################")
         print("[INFO] Loading %s" % k)
-        expected_result_names = [get_result_name(k, scoring_mode) for scoring_mode in SCORING_MODES]
-        missing_result_names = [result_name for result_name in expected_result_names
-                               if (result_name not in existing_normed_columns or result_name not in existing_fitness_columns)]
-        if RESUME_MISSING_MODELS and len(missing_result_names) == 0:
+        applicable_scoring_modes = [
+            scoring_mode
+            for scoring_mode in SCORING_MODES
+            if k in get_models_for_scoring_mode(scoring_mode)
+        ]
+        if not applicable_scoring_modes:
+            print("[INFO] Skipping %s; it is not saved for the requested scoring modes" % k)
+            continue
+        missing_scoring_modes = [
+            scoring_mode
+            for scoring_mode in applicable_scoring_modes
+            if get_result_name(k, scoring_mode)
+            not in existing_normed_columns_by_mode[scoring_mode]
+        ]
+        if RESUME_MISSING_MODELS and len(missing_scoring_modes) == 0:
             print("[INFO] Skipping %s; all requested result columns already exist" % k)
             continue
         v = get_tokenized_sequences_filename(k, dataset_to_use, dataset_cache_path)
@@ -565,7 +644,7 @@ for dataset_to_use in working_datasets:
         mask_token = get_mask_token_id(model, k, mask_token_string)
 
         print("[INFO] Mask token value is %s" % str(mask_token))
-        if not k.startswith("esm"):
+        if k.startswith("progen"):
             print("[WARNING] ProGen2 is causal. Using its pad token as a mask is not equivalent to native causal likelihood.")
 
         masked_prompt = wt_tokens.clone()
@@ -585,10 +664,11 @@ for dataset_to_use in working_datasets:
         print("[INFO] ASSERT 2/2 (masking) passed")
 
 
-        for scoring_mode in SCORING_MODES:
+        for scoring_mode in applicable_scoring_modes:
             result_name = get_result_name(k, scoring_mode)
 
-            if (RESUME_MISSING_MODELS and result_name in existing_normed_columns and result_name in existing_fitness_columns):
+            if (RESUME_MISSING_MODELS
+                    and result_name in existing_normed_columns_by_mode[scoring_mode]):
                 print("[INFO] Skipping %s; result column already exists" % result_name)
                 continue
 
@@ -652,8 +732,7 @@ for dataset_to_use in working_datasets:
             print("[INFO] ASSERT 2/2 (WT fitness is zero) passed")
 
             normed_fitness = fitness / normalization_denominator
-            normed_fitness_all.append((result_name, normed_fitness))
-            fitness_all.append((result_name, fitness))
+            normed_fitness_by_mode[scoring_mode].append((result_name, normed_fitness))
 
             print("[INFO] %s fitness range: %.6f to %.6f" %
                   (scoring_mode, fitness.min(), fitness.max()))
@@ -665,6 +744,22 @@ for dataset_to_use in working_datasets:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            
-    pd.DataFrame(dict(normed_fitness_all)).to_csv(normed_fitness_path, index=False)
-    pd.DataFrame(dict(fitness_all)).to_csv(fitness_path, index=False)
+
+    for scoring_mode in SCORING_MODES:
+        result_columns = normed_fitness_by_mode[scoring_mode]
+        if not result_columns:
+            print("[INFO] No %s results to save for %s" % (scoring_mode, dataset_to_use))
+            continue
+        result_df = pd.DataFrame(dict(result_columns))
+        ordered_columns = [
+            get_result_name(model_key, scoring_mode)
+            for model_key in get_models_for_scoring_mode(scoring_mode)
+            if get_result_name(model_key, scoring_mode) in result_df.columns
+        ]
+        result_df.loc[:, ordered_columns].to_csv(
+            normed_fitness_paths[scoring_mode], index=False)
+        print("[INFO] Saved %s columns to %s: %s" % (
+            scoring_mode,
+            normed_fitness_paths[scoring_mode],
+            ", ".join(ordered_columns),
+        ))

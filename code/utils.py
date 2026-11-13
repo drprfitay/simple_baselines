@@ -42,7 +42,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 root_dataset_path = str(DATA_DIR / "merged_datasets")
 
 DATASET_PATHS = {
-    "gfp" : str(DATA_DIR / "gfp/gfp_dataset_10mut.csv"),
+    "gfp" : str(DATA_DIR / "gfp/gfp.csv"),
     "lov": str(DATA_DIR / "lov/lov.csv"),
     "pard3": str(DATA_DIR / "pard3/pard3.csv"),
     "gcn4": str(DATA_DIR / "gcn4/gcn4.csv"),
@@ -55,7 +55,8 @@ DATASET_PATHS = {
     "his": str(DATA_DIR / "his/his.csv"),
     "his2": str(DATA_DIR / "his2/his2.csv"),
     "his5": str(DATA_DIR / "his5/his5.csv"),
-    "casp": str(DATA_DIR / "casp/casp.csv")
+    "casp": str(DATA_DIR / "casp/casp.csv"),
+    "casp_11": str(DATA_DIR / "casp_11/casp_11.csv") # these are the same, just with 11 and less than 11 muts
 }
 
 positions = {
@@ -72,7 +73,8 @@ positions = {
     "his": ["L7", "D211"],
     "his2": ["N137", "F163"],
     "his5": ["R181", "D211"],
-    "casp": ["D561", "R588"]
+    "casp": ["D561", "R588"],
+    "casp_11": ["D561", "R588"]
 }
 
 xlabel_dict = {
@@ -117,14 +119,15 @@ full_seq_column_name = {
     "gfp": "full_seq",
     "pte": "full_seq",   
     "aamyl": "full_seq",
-    "nmt": "seq",
+    "nmt": "full_seq",
     "trpb": "full_seq",
     "ired": "full_seq",
     "nucb": "full_seq",
     "his": "full_seq",
     "his2": "full_seq",
     "his5": "full_seq",
-    "casp": "full_seq"
+    "casp": "full_seq",
+    "casp_11": "full_seq",
 }
 
 num_muts_column_name = {
@@ -141,7 +144,8 @@ num_muts_column_name = {
     "his": "num_muts",
     "his2": "num_muts",
     "his5": "num_muts",
-    "casp": "num_muts"
+    "casp": "num_muts",
+    "casp_11": "num_muts"
 }
 
 
@@ -387,12 +391,30 @@ def casp_relevant_columns(df):
     return get_relevant_columns_gfp_protgym(df, positions["casp"][0], positions["casp"][1])
 
 def nmt_positions(df):
-    si = np.where(df.columns == "1")[0][0]
-    ei = np.where(df.columns == "272")[0][0]+1
-    positions_with_mutations =  np.array([len(pd.unique(df.iloc[:,i])) > 1 for i in range(si,ei)])
-    return df.columns[si:ei][positions_with_mutations].to_list()
+    if positions["nmt"][0] in df.columns and positions["nmt"][1] in df.columns:
+        return get_positions_gfp_protgym(
+            df,
+            positions["nmt"][0],
+            positions["nmt"][1],
+        )
+
+    return [int(position) for position in nmt_relevant_columns(df)]
 
 def nmt_relevant_columns(df):
+    if positions["nmt"][0] in df.columns and positions["nmt"][1] in df.columns:
+        return get_relevant_columns_gfp_protgym(
+            df,
+            positions["nmt"][0],
+            positions["nmt"][1],
+        )
+
+    if "1" not in df.columns or "272" not in df.columns:
+        raise ValueError(
+            "NMT data must contain compact mutation columns %s through %s "
+            "or expanded residue columns 1 through 272"
+            % (positions["nmt"][0], positions["nmt"][1])
+        )
+
     si = np.where(df.columns == "1")[0][0]
     ei = np.where(df.columns == "272")[0][0]+1
     positions_with_mutations =  np.array([len(pd.unique(df.iloc[:,i])) > 1 for i in range(si,ei)])
@@ -409,7 +431,8 @@ get_positions = {
     "his": his_positions,
     "his2": his2_positions,
     "his5": his5_positions,
-    "casp": casp_positions
+    "casp": casp_positions,
+    "casp_11": casp_positions
 }
 
 get_relevant_columns = {
@@ -423,7 +446,8 @@ get_relevant_columns = {
     "his": his_relevant_columns,
     "his2": his2_relevant_columns,
     "his5": his5_relevant_columns,
-    "casp": casp_relevant_columns
+    "casp": casp_relevant_columns,
+    "casp_11": casp_relevant_columns
 }
 
 
