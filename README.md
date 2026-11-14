@@ -99,7 +99,6 @@ Open a notebook in `notebooks/` and choose **Restart Kernel and Run All Cells**.
 | [`lean_similarity_analysis.ipynb`](notebooks/lean_similarity_analysis.ipynb) | Examines what pLM representations add beyond mutation identity by comparing pairwise representation distances and reconstructing pLM embeddings from one-hot encodings. |
 | [`lean_library_generation.ipynb`](notebooks/lean_library_generation.ipynb) | Evaluates computational candidate-library selection and exploration strategies across protein fitness landscapes, comparing their ability to prioritize useful sequences. |
 
-Most configured exports are written to analysis-specific subdirectories under `figures/`. `lean_library_generation.ipynb` also writes one analysis to `refined_figures/figure_screen_analysis/`; `lean_oracle_transfer_learning.ipynb` renders its plots inline and does not currently export figure files.
 
 ### Minimal working demonstration
 
