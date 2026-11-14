@@ -12,7 +12,11 @@
  |___/_/ \_\___/___|____|___|_|\_|___|___/
 ```
 
-Code and data accompanying **[Simple baselines rival protein language models in mutation-dense design tasks](https://www.biorxiv.org/content/10.64898/2026.05.01.722313v1)**. The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads. The broader research codebase is `fitness_learning`. **The notebooks reproduce the paper's figures directly; the full computational reproduction workflow is documented below.**
+This repository contains seven analysis notebooks that reproduce the paper's figures, alongside the code and workflows for independently reproducing the underlying experiments.
+
+Code and data accompanying the preprint **[Simple baselines rival protein language models in dense combinatorial protein landscapes](https://www.biorxiv.org/content/10.64898/2026.05.01.722313v1)** by Itay Talpir and Sarel J. Fleishman. 
+
+The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads. The broader research codebase is `fitness_learning`. **The notebooks reproduce the paper's figures directly; the full computational reproduction workflow is documented below.**
 
 ## Installation and data download
 
@@ -184,4 +188,4 @@ scripts/          data download, experiment runner, and installation verificatio
 
 If you use this repository, please cite:
 
-> Talpir, I., & Fleishman, S. J. (2026). *Simple baselines rival protein language models in mutation-dense design tasks*. bioRxiv. https://doi.org/10.64898/2026.05.01.722313
+Talpir, I., & Fleishman, S. J. (2026). *Simple baselines rival protein language models in dense combinatorial protein landscapes*. bioRxiv. https://doi.org/10.64898/2026.05.01.722313
