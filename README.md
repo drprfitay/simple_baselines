@@ -12,22 +12,27 @@
  |___/_/ \_\___/___|____|___|_|\_|___|___/
 ```
 
-This repository contains seven analysis notebooks that reproduce the paper's figures, alongside the code and workflows for independently reproducing the underlying experiments.
+Code and data accompanying the preprint **[Simple baselines rival protein language models in dense combinatorial protein landscapes](https://doi.org/10.64898/2026.05.01.722313)** by Itay Talpir and Sarel J. Fleishman. The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads; `fitness_learning` is the broader research codebase.
 
-Code and data accompanying the preprint **[Simple baselines rival protein language models in dense combinatorial protein landscapes](https://www.biorxiv.org/content/10.64898/2026.05.01.722313v1)** by Itay Talpir and Sarel J. Fleishman. 
-
-The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads. The broader research codebase is `fitness_learning`. **The notebooks reproduce the paper's figures directly; the full computational reproduction workflow is documented below.**
+The prepared-data workflow reproduces the paper's figures without rerunning model predictions. The available stages for independently recomputing the underlying experiments are documented separately below.
 
 ## Installation and data download
+
+### System requirements
+
+- **Analysis notebooks:** Python 3.10 or 3.11 and the packages in [requirements.txt](requirements.txt). The dependency set records testing with Python 3.10; the installation smoke test also passed on RHEL 9.6 with Python 3.11.5. The notebooks can run on CPU and do not require a GPU.
+- **Installation and data download:** a Unix-like shell, Git, and Python with virtual-environment support; `scripts/download_data.sh` additionally requires `curl` and `unzip`.
+- **Experiment recomputation:** large pLM embedding, scoring, and full training runs commonly require a CUDA-capable GPU and substantial RAM/VRAM. No single CUDA version is prescribed by this repository. Local embedding workers are supported; LSF execution additionally requires `bsub` and a configured Conda environment.
+- **Optional models and features:** ESM2 and ProGen use local checkpoints under `models/weights/`; Hugging Face-backed models require network access or a populated model cache. [`mine_foldseek_tokens.py`](code/mine_foldseek_tokens.py) requires a Foldseek executable.
 
 ### 1. Install
 
 Python **3.10 or 3.11** is required.
 
 ```bash
-git clone <repository-url> simple_baselines
+git clone https://github.com/drprfitay/simple_baselines.git simple_baselines
 cd simple_baselines
-./install.sh
+bash install.sh
 source .venv/bin/activate
 ```
 
@@ -36,8 +41,16 @@ The installer creates `.venv`, installs [requirements.txt](requirements.txt), in
 To use an existing Conda environment instead:
 
 ```bash
-./install.sh --no-venv --skip-deps --python "$CONDA_PREFIX/bin/python"
+bash install.sh --no-venv --skip-deps --python "$CONDA_PREFIX/bin/python"
 ```
+
+For experiments that use ProGen2, optionally download the small and medium checkpoints (about 3.2 GiB) to `models/weights/progen/`:
+
+```bash
+bash scripts/download_progen_weights.sh
+```
+
+This checkpoint download is separate from installation and the prepared analysis-data download.
 
 ### 2. Download the prepared data
 
@@ -50,21 +63,23 @@ bash scripts/download_data.sh
 The script downloads two public archives: (1) the datasets and (2) the merged analysis tables together with prepared embeddings. It installs:
 
 - Datasets under `data/`.
-- **Merged analysis tables under root-level `merged_datasets/`.** These are the only data files required to reproduce the paper's figures with the notebooks.
+- **Merged analysis tables under root-level `merged_datasets/`.** These provide the primary inputs to the notebooks.
 - Prepared example embeddings for **HIS2, AAV, and PARD3** under each dataset's `data/<dataset>/embeddings/` directory. They are useful for rerunning embedding-based baselines, but **not required for figure reproduction**. Embeddings for all datasets can be regenerated using the workflow below.
 - A `data/merged_datasets` compatibility link, when that path is available.
 
 To retain the large downloaded archives for reuse, pass `--download-dir .downloads` to the downloader.
 
-Verify the installation and downloaded payload with:
+Run the dependency, source-code, repository-structure, notebook-count, and dataset-CSV smoke test with:
 
 ```bash
 python scripts/verify_install.py --strict-data
 ```
 
+`--strict-data` checks the eleven canonical `data/<dataset>/<dataset>.csv` files; it does not verify every table under `merged_datasets/`. Executing the minimal notebook demonstration below provides an end-to-end check of its prepared analysis-table inputs.
+
 ## Reproduce all paper figures: analysis notebooks
 
-**The seven notebooks collectively reproduce all figures in the paper from the downloaded `merged_datasets/` tables.** They summarize the results of **all experiments reported in the paper**, including the analyses of previously computed predictions, trained models, and embeddings. Running these notebooks does **not** require regenerating embeddings, retraining models, or recomputing zero-shot scores.
+**The seven notebooks collectively reproduce all figures in the paper from the prepared download.** They primarily consume the analysis tables under `merged_datasets/` and summarize the results of **all experiments reported in the paper**, including analyses of previously computed predictions, trained models, and embeddings. `lean_zero_shot_notebook.ipynb`, `lean_epistasis_analysis.ipynb`, and `lean_library_generation.ipynb` additionally read downloaded dataset or PSSM files under `data/`. Running the notebooks does **not** require regenerating embeddings, retraining models, or recomputing zero-shot scores.
 
 Start Jupyter from the repository root:
 
@@ -84,22 +99,46 @@ Open a notebook in `notebooks/` and choose **Restart Kernel and Run All Cells**.
 | [`lean_similarity_analysis.ipynb`](notebooks/lean_similarity_analysis.ipynb) | Examines what pLM representations add beyond mutation identity by comparing pairwise representation distances and reconstructing pLM embeddings from one-hot encodings. |
 | [`lean_library_generation.ipynb`](notebooks/lean_library_generation.ipynb) | Evaluates computational candidate-library selection and exploration strategies across protein fitness landscapes, comparing their ability to prioritize useful sequences. |
 
-Generated figures are saved under `figures/` wherever an output path is configured.
+Most configured exports are written to analysis-specific subdirectories under `figures/`. `lean_library_generation.ipynb` also writes one analysis to `refined_figures/figure_screen_analysis/`; `lean_oracle_transfer_learning.ipynb` renders its plots inline and does not currently export figure files.
+
+### Minimal working demonstration
+
+After installation and data download, run the CPU-only variance notebook from the repository root in Jupyter, or execute it non-interactively:
+
+```bash
+jupyter nbconvert --to notebook --execute \
+  notebooks/lean_variance_analysis_merged.ipynb \
+  --output lean_variance_analysis_merged.executed.ipynb \
+  --output-dir /tmp \
+  --ExecutePreprocessor.timeout=600
+```
+
+A successful run completes without notebook errors and writes these six SVG files under `figures/variance_analysis/`:
+
+```text
+pvalue_dist_fdr_correction.svg
+corrected_all.svg
+corrected_muts.svg
+fval_all.svg
+fval_muts.svg
+var_explained_plot.svg
+```
 
 ## Reproduce the underlying experiments
 
-The notebooks above reproduce the paper's figures directly from the prepared merged tables. **To independently recompute the results that feed those tables**, follow the full pipeline below, then rerun the same notebooks on the regenerated results:
+The notebooks above reproduce the paper's figures directly from the prepared download. **To independently recompute the experiments**, follow the available stages below, integrate the resulting cross-experiment analysis tables, and then rerun the same notebooks:
 
 ```text
 dataset CSV
   -> chunked PLM embeddings
   -> collected mutation-order tensors
   -> baseline training, model selection, or fitness scoring
-  -> merged result tables
+  -> experiment-specific result tables
+  -> cross-experiment analysis-table integration
   -> lean notebooks
 ```
 
-These stages can require substantial CPU, GPU, RAM/VRAM, and scheduler time. Prepared embeddings (including the HIS2, AAV, and PARD3 examples) are already included in the downloaded data, so you can reuse them where applicable instead of starting from the embedding stage. All embeddings can also be recomputed from scratch.
+These stages can require substantial CPU, GPU, RAM/VRAM, and scheduler time. Prepared embeddings (including the HIS2, AAV, and PARD3 examples) are already included in the downloaded data, so you can reuse them where applicable instead of starting from the embedding stage. All embeddings can also be recomputed from scratch. The repository provides embedding collectors and experiment-specific result collectors, but it does not currently provide one end-to-end command that rebuilds every final notebook input (for example, `merged_datasets/merged.csv` and `merged_datasets/merged_by_subsamples.csv`) from all newly computed outputs.
 
 ### 1. Generate embeddings
 
@@ -150,9 +189,9 @@ FITNESS_DATASETS="pard3" FITNESS_MODELS="esm_8m" \
 
 The runner uses the `esm_env` Conda environment by default; set `BASELINE_CONDA_ENV` to override it. Experiment names, output paths, quick-test settings, and classification caveats are documented in [BASELINE_EXPERIMENTS.md](docs/BASELINE_EXPERIMENTS.md).
 
-### 3. Collect results and rerun the analysis
+### 3. Collect available results and integrate the analysis tables
 
-Collect the generated outputs into mutation-order tensors and merged result tables using the workflows documented in [EXAMPLE_RUNS.md](docs/EXAMPLE_RUNS.md) and [CODE_REFERENCE.md](docs/CODE_REFERENCE.md). Once the corresponding merged tables have been reconstructed, rerun the [analysis notebooks](#reproduce-all-paper-figures-analysis-notebooks) to regenerate the figures from your own experiment outputs.
+Collect embedding chunks into mutation-order tensors and collect experiment-specific result tables using the workflows documented in [EXAMPLE_RUNS.md](docs/EXAMPLE_RUNS.md) and [CODE_REFERENCE.md](docs/CODE_REFERENCE.md). Final cross-experiment integration into all schemas and paths expected under `merged_datasets/` must currently be performed separately; no single repository command implements that last stage. Once the corresponding analysis tables have been assembled, rerun the [analysis notebooks](#reproduce-all-paper-figures-analysis-notebooks) to regenerate the figures from your own experiment outputs.
 
 ## Documentation
 
@@ -183,6 +222,11 @@ scripts/          data download, experiment runner, and installation verificatio
 - SaProt, ProtBERT, Ankh, and other Hugging Face models require network access or an existing model cache.
 - `mine_foldseek_tokens.py` requires the Foldseek executable.
 - Downloaded data, model outputs, and generated figures are intentionally excluded from Git.
+- A clean installation time has not yet been benchmarked, so an installation-time estimate and its reference hardware remain to be supplied.
+
+### Availability and license
+
+The source repository is available at [https://github.com/drprfitay/simple_baselines](https://github.com/drprfitay/simple_baselines). No `LICENSE` file is currently included; a repository license remains an outstanding submission requirement.
 
 ## Citation
 
