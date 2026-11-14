@@ -92,15 +92,16 @@ if ((check_only == 0)); then
   "$python_bin" -m pip install --no-deps --no-build-isolation -e "$repo_root"
 fi
 
-verify_args=()
+verify_args=(--skip-data)
 if ((model_check == 1)); then
   verify_args+=(--model-check)
 fi
 MPLCONFIGDIR="${repo_root}/.matplotlib" "$python_bin" "${repo_root}/scripts/verify_install.py" "${verify_args[@]}"
 
 echo
-echo "Installation verified."
+echo "Code installation verified."
 if ((use_venv == 1)); then
   echo "Activate it with: source ${venv_dir}/bin/activate"
 fi
+echo "After downloading the data, verify it with: python scripts/verify_install.py --strict-data"
 echo "Start notebooks from the repository root with: jupyter lab"

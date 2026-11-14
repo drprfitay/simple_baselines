@@ -44,10 +44,16 @@ EXPECTED_DATASETS = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    data_group = parser.add_mutually_exclusive_group()
+    data_group.add_argument(
         "--strict-data",
         action="store_true",
         help="Fail when the separately distributed data payload is absent.",
+    )
+    data_group.add_argument(
+        "--skip-data",
+        action="store_true",
+        help="Skip checks for the separately downloaded data payload.",
     )
     parser.add_argument(
         "--model-check",
@@ -62,7 +68,7 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def check_structure(strict_data: bool) -> None:
+def check_structure() -> None:
     for relative in ("code", "notebooks", "models", "scripts"):
         require((ROOT / relative).is_dir(), f"missing directory: {relative}")
 
@@ -71,9 +77,11 @@ def check_structure(strict_data: bool) -> None:
     require(len(scripts) == 35, f"expected 35 Python modules, found {len(scripts)}")
     require(len(notebooks) == 7, f"expected 7 lean notebooks, found {len(notebooks)}")
 
+
+def check_data(strict_data: bool) -> None:
     missing_data = []
     for dataset in EXPECTED_DATASETS:
-        filename = "gfp_dataset_10mut.csv" if dataset == "gfp" else f"{dataset}.csv"
+        filename = f"{dataset}.csv"
         path = ROOT / "data" / dataset / filename
         if not path.is_file():
             missing_data.append(str(path.relative_to(ROOT)))
@@ -95,7 +103,7 @@ def check_imports() -> None:
     import utils_for_analysis
 
     require(Path(utils.root_dataset_path) == ROOT / "data" / "merged_datasets", "utils root path is not portable")
-    require(utils.DATASET_PATHS["gfp"] == str(ROOT / "data" / "gfp" / "gfp_dataset_10mut.csv"), "GFP path is not portable")
+    require(utils.DATASET_PATHS["gfp"] == str(ROOT / "data" / "gfp" / "gfp.csv"), "GFP path is not portable")
     require(utils_for_analysis.DATASET_PATHS is utils.DATASET_PATHS, "analysis shim does not expose utils")
     print("[ok] project imports and repository-relative paths")
 
@@ -122,7 +130,11 @@ def check_model() -> None:
 
 def main() -> None:
     args = parse_args()
-    check_structure(args.strict_data)
+    check_structure()
+    if args.skip_data:
+        print("[skip] external data payload (download and verify it separately)")
+    else:
+        check_data(args.strict_data)
     check_imports()
     check_sources()
     if args.model_check:
