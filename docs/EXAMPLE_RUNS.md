@@ -475,19 +475,6 @@ python code/collect_model_selection_scoring_results.py \
 
 The outputs are `by_mutation_val_less.csv`, `by_mutation_val_eq.csv`, `by_mutation_val_full.csv`, `random_full.csv`, and `random_internal.csv`.
 
-### `transfer_learning_across_layers.py`
-
-Run the pLM layer/pooling transfer-learning grid for PARD3, training on mutation order 1 or lower:
-
-```bash
-python code/transfer_learning_across_layers.py \
-  --dataset pard3 \
-  --train_muts 1 \
-  --delta
-```
-
-The script reads `data/merged_datasets/oracle_transfer_learning/pard3_for_tl.pkl`. Remove `--delta` for regular rather than WT-delta embeddings.
-
 ### `transfer_learning_ohe_grid.py`
 
 Run the matching OHE transfer-learning grid:
