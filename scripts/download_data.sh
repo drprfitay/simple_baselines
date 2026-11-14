@@ -5,8 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # The release is split into two archives. Keep the old environment variable
 # names as fallbacks so existing setup commands continue to work.
-data_url="${DATA_URL:-${DATASETS_FOR_ANALYSIS_URL:-https://drive.google.com/file/d/16s7qcJCjR4TsbVn-ShWe3ycdxXo84aEC/view?usp=drive_link}}"
-merged_embeddings_url="${MERGED_DATASETS_AND_EMBEDDINGS_URL:-${MERGED_DATASETS_URL:-https://drive.google.com/file/d/18KK9ig260Hzwl1rVgqRnjOyiCbopD2qw/view?usp=drive_link}}"
+data_url="${DATA_URL:-${DATASETS_FOR_ANALYSIS_URL:-https://drive.google.com/file/d/1CqldNuKitdeafFbo65sfGOn3vSFIy_s5/view?usp=sharing}}"
+merged_embeddings_url="${MERGED_DATASETS_AND_EMBEDDINGS_URL:-${MERGED_DATASETS_URL:-https://drive.google.com/file/d/1P0JFKBk5s3BXT5Jo983l_rlFiAPrpfLG/view?usp=sharing}}"
 download_dir="${DOWNLOAD_DIR:-}"
 
 usage() {
