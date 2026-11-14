@@ -1,14 +1,24 @@
-# Protein Fitness: Simple Baselines
+# Simple Baselines
 
-This repository contains the baseline, embedding, and analysis workflows extracted from `fitness_learning`: seven lean analysis notebooks, model and training code, local PLM implementations, and scripts for downloading the prepared inputs.
+```text
+  ___ ___ __  __ ___ _    ___
+ / __|_ _|  \/  | _ \ |  | __|
+ \__ \| || |\/| |  _/ |__| _|
+ |___/___|_|  |_|_| |____|___|
 
-The fastest way to reproduce the current analyses is to use the prepared data and run the notebooks. Recomputing embeddings and model outputs is a separate, substantially longer workflow described below.
+  ___   _   ___ ___ _    ___ _  _ ___ ___
+ | _ ) /_\ / __| __| |  |_ _| \| | __/ __|
+ | _ \/ _ \\__ \ _|| |__ | || .` | _|\__ \
+ |___/_/ \_\___/___|____|___|_|\_|___|___/
+```
 
-## Reproduce the current analyses
+Code and data accompanying **[Simple baselines rival protein language models in mutation-dense design tasks](https://www.biorxiv.org/content/10.64898/2026.05.01.722313v1)**. The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads. The broader research codebase is `fitness_learning`. **The notebooks reproduce the paper's figures directly; the full computational reproduction workflow is documented below.**
+
+## Installation and data download
 
 ### 1. Install
 
-Python 3.10 or 3.11 is required.
+Python **3.10 or 3.11** is required.
 
 ```bash
 git clone <repository-url> simple_baselines
@@ -17,31 +27,40 @@ cd simple_baselines
 source .venv/bin/activate
 ```
 
-The installer creates `.venv`, installs [requirements.txt](requirements.txt), installs the modules under `code/`, and runs a smoke test. To use an existing Conda environment instead:
+The installer creates `.venv`, installs [requirements.txt](requirements.txt), installs the modules under `code/`, and runs a smoke test.
+
+To use an existing Conda environment instead:
 
 ```bash
 ./install.sh --no-venv --skip-deps --python "$CONDA_PREFIX/bin/python"
 ```
 
-### 2. Download the prepared analysis data
+### 2. Download the prepared data
 
-From the repository root, run:
+From the repository root:
 
 ```bash
 bash scripts/download_data.sh
 ```
 
-This downloads two public archives: one containing the datasets and one containing the merged analysis tables plus prepared embeddings. Datasets are installed under `data/`, merged tables under the root-level `merged_datasets/`, and embeddings under each dataset's `data/<dataset>/embeddings/` directory. A `data/merged_datasets` compatibility link is also created when that path is available. Use `--download-dir .downloads` to retain the large archives for reuse.
+The script downloads two public archives: (1) the datasets and (2) the merged analysis tables together with prepared embeddings. It installs:
 
-Verify the installation and data payload with:
+- Datasets under `data/`.
+- **Merged analysis tables under root-level `merged_datasets/`.** These are the only data files required to reproduce the paper's figures with the notebooks.
+- Prepared example embeddings for **HIS2, AAV, and PARD3** under each dataset's `data/<dataset>/embeddings/` directory. They are useful for rerunning embedding-based baselines, but **not required for figure reproduction**. Embeddings for all datasets can be regenerated using the workflow below.
+- A `data/merged_datasets` compatibility link, when that path is available.
+
+To retain the large downloaded archives for reuse, pass `--download-dir .downloads` to the downloader.
+
+Verify the installation and downloaded payload with:
 
 ```bash
 python scripts/verify_install.py --strict-data
 ```
 
-Prepared embeddings are included for rerunning embedding-based baselines; they are not needed to recreate the notebook analyses.
+## Reproduce all paper figures: analysis notebooks
 
-### 3. Run the lean notebooks
+**The seven notebooks collectively reproduce all figures in the paper from the downloaded `merged_datasets/` tables.** They summarize the results of **all experiments reported in the paper**, including the analyses of previously computed predictions, trained models, and embeddings. Running these notebooks does **not** require regenerating embeddings, retraining models, or recomputing zero-shot scores.
 
 Start Jupyter from the repository root:
 
@@ -49,23 +68,23 @@ Start Jupyter from the repository root:
 jupyter lab
 ```
 
-Open a notebook under `notebooks/` and use **Restart Kernel and Run All Cells**. The notebooks normalize their working directory to the repository root and can also be launched from `notebooks/`.
+Open a notebook in `notebooks/` and choose **Restart Kernel and Run All Cells**. The notebooks are independent and can be run in any order; their order below follows the progression of the paper's results. They normalize their working directory to the repository root and can also be launched from `notebooks/`.
 
-| Notebook | What it does |
+| Notebook | Analysis reproduced |
 |---|---|
-| [`lean_epistasis_analysis.ipynb`](notebooks/lean_epistasis_analysis.ipynb) | Quantifies classical and sign epistasis, reversals, and their relationship to zero-shot scores. |
-| [`lean_library_generation.ipynb`](notebooks/lean_library_generation.ipynb) | Compares candidate-library screening and exploration strategies across protein landscapes. |
-| [`lean_merged_performance_ratio_plots.ipynb`](notebooks/lean_merged_performance_ratio_plots.ipynb) | Plots controlled-extrapolation and subsampling performance, including PLM-to-one-hot ratios. |
-| [`lean_oracle_transfer_learning.ipynb`](notebooks/lean_oracle_transfer_learning.ipynb) | Compares oracle transfer learning with embeddings, delta embeddings, and one-hot encodings. |
-| [`lean_similarity_analysis.ipynb`](notebooks/lean_similarity_analysis.ipynb) | Compares one-hot and PLM representation geometry using pairwise distances and reconstruction. |
-| [`lean_variance_analysis_merged.ipynb`](notebooks/lean_variance_analysis_merged.ipynb) | Runs train/test-aware statistical tests and summarizes variance explained. |
-| [`lean_zero_shot_notebook.ipynb`](notebooks/lean_zero_shot_notebook.ipynb) | Evaluates zero-shot score correlations, ROC performance, and model comparisons. |
+| [`lean_zero_shot_notebook.ipynb`](notebooks/lean_zero_shot_notebook.ipynb) | Evaluates zero-shot mutation-effect/fitness scoring against measured activity: rank correlations, ROC performance for distinguishing functional variants, and comparisons between pLM and conventional scores. |
+| [`lean_epistasis_analysis.ipynb`](notebooks/lean_epistasis_analysis.ipynb) | Characterizes classical and sign epistasis and fitness-effect reversals; compares these landscape properties with changes in zero-shot model scores. |
+| [`lean_merged_performance_ratio_plots.ipynb`](notebooks/lean_merged_performance_ratio_plots.ipynb) | Summarizes supervised prediction across controlled lower-to-higher mutation-order extrapolation and random subsampling; compares pLM-based models with one-hot baselines, including PLM-to-one-hot performance ratios. |
+| [`lean_variance_analysis_merged.ipynb`](notebooks/lean_variance_analysis_merged.ipynb) | Quantifies explained variance and performs train/test-aware statistical comparisons of model performance across the merged benchmark results. |
+| [`lean_oracle_transfer_learning.ipynb`](notebooks/lean_oracle_transfer_learning.ipynb) | Analyzes oracle transfer-learning experiments and contrasts full pLM embeddings, delta embeddings, and one-hot sequence encodings. |
+| [`lean_similarity_analysis.ipynb`](notebooks/lean_similarity_analysis.ipynb) | Examines what pLM representations add beyond mutation identity by comparing pairwise representation distances and reconstructing pLM embeddings from one-hot encodings. |
+| [`lean_library_generation.ipynb`](notebooks/lean_library_generation.ipynb) | Evaluates computational candidate-library selection and exploration strategies across protein fitness landscapes, comparing their ability to prioritize useful sequences. |
 
-The notebooks are independent; they do not need to be run in a particular order. Generated figures are written under `figures/` where an output path is configured.
+Generated figures are saved under `figures/` wherever an output path is configured.
 
-## Rerun analyses from earlier stages
+## Reproduce the underlying experiments
 
-The full workflow is:
+The notebooks above reproduce the paper's figures directly from the prepared merged tables. **To independently recompute the results that feed those tables**, follow the full pipeline below, then rerun the same notebooks on the regenerated results:
 
 ```text
 dataset CSV
@@ -76,11 +95,11 @@ dataset CSV
   -> lean notebooks
 ```
 
-These steps can require substantial CPU, GPU, memory, and scheduler time.
+These stages can require substantial CPU, GPU, RAM/VRAM, and scheduler time. Prepared embeddings (including the HIS2, AAV, and PARD3 examples) are already included in the downloaded data, so you can reuse them where applicable instead of starting from the embedding stage. All embeddings can also be recomputed from scratch.
 
-### Generate embeddings
+### 1. Generate embeddings
 
-This example generates PARD3 embeddings at its ten designed positions with ESM2 8M and one local worker. Before running it, place the checkpoint at `models/weights/esm2/esm2_t6_8M_UR50D.pth`; model weights are not tracked by Git.
+For example, generate PARD3 embeddings at its ten designed positions with ESM2 8M and one local worker. First place the model checkpoint at `models/weights/esm2/esm2_t6_8M_UR50D.pth` (model weights are not tracked by Git):
 
 ```bash
 python code/embedding_engine.py \
@@ -99,21 +118,19 @@ python code/embedding_engine.py \
   --n_workers 1
 ```
 
-The positions are one-based protein positions. For an LSF cluster, change `--job_executing_type local` to `lsf` and select a suitable worker count. Each worker loads its own model copy.
+The positions are **one-based protein positions**. For an LSF cluster, switch `--job_executing_type local` to `lsf` and choose a suitable worker count; **each worker loads its own copy of the model**.
 
-The command produces chunked outputs. Follow the collection and merging examples in [EXAMPLE_RUNS.md](docs/EXAMPLE_RUNS.md#embedding-collection-and-feature-preparation) to create tensors suitable for training. Model-specific roles and inputs are summarized in [CODE_REFERENCE.md](docs/CODE_REFERENCE.md#core-embedding-and-model-modules).
+This produces chunked outputs. Follow the collection and merging examples in [EXAMPLE_RUNS.md](docs/EXAMPLE_RUNS.md#embedding-collection-and-feature-preparation) to build the mutation-order tensors used for training. See [CODE_REFERENCE.md](docs/CODE_REFERENCE.md#core-embedding-and-model-modules) for model-specific roles and required inputs.
 
-The prepared embedding archive is installed by `scripts/download_data.sh`, so these tensors do not need to be recomputed unless you want to regenerate them.
+### 2. Rerun baseline training and fitness experiments
 
-### Rerun baseline and fitness experiments
-
-List the reproducible experiment configurations:
+List the available reproducible experiment configurations:
 
 ```bash
 bash scripts/run_baseline_experiments.sh list
 ```
 
-Run one controlled-extrapolation baseline:
+Run a controlled-extrapolation baseline:
 
 ```bash
 bash scripts/run_baseline_experiments.sh \
@@ -129,6 +146,10 @@ FITNESS_DATASETS="pard3" FITNESS_MODELS="esm_8m" \
 
 The runner uses the `esm_env` Conda environment by default; set `BASELINE_CONDA_ENV` to override it. Experiment names, output paths, quick-test settings, and classification caveats are documented in [BASELINE_EXPERIMENTS.md](docs/BASELINE_EXPERIMENTS.md).
 
+### 3. Collect results and rerun the analysis
+
+Collect the generated outputs into mutation-order tensors and merged result tables using the workflows documented in [EXAMPLE_RUNS.md](docs/EXAMPLE_RUNS.md) and [CODE_REFERENCE.md](docs/CODE_REFERENCE.md). Once the corresponding merged tables have been reconstructed, rerun the [analysis notebooks](#reproduce-all-paper-figures-analysis-notebooks) to regenerate the figures from your own experiment outputs.
+
 ## Documentation
 
 | Document | Use it for |
@@ -140,13 +161,13 @@ The runner uses the `esm_env` Conda environment by default; set `BASELINE_CONDA_
 ## Repository layout
 
 ```text
-code/          embedding, scoring, training, collection, and analysis modules
-data/          downloaded datasets, cached features, and prepared embeddings
+code/             embedding, scoring, training, collection, and analysis modules
+data/             downloaded datasets, cached features, and prepared embeddings
 merged_datasets/  prepared tables consumed by the lean notebooks
-models/        local ESM2/ProGen implementations and optional checkpoints
-notebooks/     seven lean analysis notebooks
-docs/          detailed references and examples
-scripts/       data download, experiment runner, and installation verification
+models/           local ESM2/ProGen implementations and optional checkpoints
+notebooks/        seven lean analysis notebooks
+docs/             detailed references and examples
+scripts/          data download, experiment runner, and installation verification
 ```
 
 ## Runtime notes
@@ -158,3 +179,9 @@ scripts/       data download, experiment runner, and installation verification
 - SaProt, ProtBERT, Ankh, and other Hugging Face models require network access or an existing model cache.
 - `mine_foldseek_tokens.py` requires the Foldseek executable.
 - Downloaded data, model outputs, and generated figures are intentionally excluded from Git.
+
+## Citation
+
+If you use this repository, please cite:
+
+> Talpir, I., & Fleishman, S. J. (2026). *Simple baselines rival protein language models in mutation-dense design tasks*. bioRxiv. https://doi.org/10.64898/2026.05.01.722313
