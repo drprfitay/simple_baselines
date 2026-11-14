@@ -12,7 +12,7 @@
  |___/_/ \_\___/___|____|___|_|\_|___|___/
 ```
 
-Code and data accompanying the preprint **[Simple baselines rival protein language models in dense combinatorial protein landscapes](https://doi.org/10.64898/2026.05.01.722313)** by Itay Talpir and Sarel J. Fleishman. The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads; `fitness_learning` is the broader research codebase.
+Code and data accompanying the preprint **[Simple baselines rival protein language models in dense combinatorial protein landscapes](https://doi.org/10.64898/2026.05.01.722313)** by Itay Talpir and Sarel J. Fleishman. The repository provides seven analysis notebooks, baseline and training code, local pLM implementations, and prepared-data downloads; 
 
 The prepared-data workflow reproduces the paper's figures without rerunning model predictions. The available stages for independently recomputing the underlying experiments are documented separately below.
 
